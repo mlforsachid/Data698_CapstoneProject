@@ -1,0 +1,64 @@
+---
+title: "Citibike Data Exploration"
+author: "Sachid Vijay Deshmukh, Ahmed Sajjad, Ann Liu-Ferrara"
+date: "2/14/2020"
+output: html_document
+---
+
+Citibike has 79 monthly files up to Jan 2020, around 100 million records. Due to limited computing power, We took every 1000th record from each monthly file.   
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE)
+rawdatadir = "C:/temp/citibike/"
+slimdatadir = "./CitibikeDataSlim/"
+```
+
+List the names of available citibike data files
+```{r list-citibike-data}
+rawfilenames=list.files(path=rawdatadir,pattern = 'citibike-tripdata.csv$', full.names = F)    # ending with .csv ; not .zip
+length(rawfilenames)
+t(t(rawfilenames))
+
+```
+
+Create the function to take every 1000th records from full size of citibike monthly data files
+
+```{r getportion}
+library(LaF)
+library(readr)
+
+getportion <- function(filename, 
+                       one_of_n=1000, 
+                       inpath=rawdatadir, 
+                       outpath=slimdatadir) {
+  # one_of_n : choose every "one_of_n" rows from file, where one_of_n is a number like 100 or 1000
+  # note: this is deterministic, not random
+  infile=paste0(inpath,filename)
+  outfile=paste0(outpath,filename)
+
+  # determine number of lines in the file
+  nlines=determine_nlines(infile)-1
+  print(paste(infile," has ", nlines," rows, after header"))
+  # make a (non-random) sequence of line numbers 
+  seq_no_header=floor(seq(from=2,to=nlines,length.out = floor(nlines/one_of_n)))
+  num_to_get=length(seq_no_header)
+  print(paste("Getting ", num_to_get, " rows out of ", nlines))
+  seq_with_header=c(1,seq_no_header)
+  foo=get_lines(infile,seq_with_header)
+  print(paste("writing to ", outfile))
+  write_lines(foo,outfile)
+}
+
+```
+
+Add Jan 2020 data file
+
+```{r addfile}
+getportion("202001-citibike-tripdata.csv", one_of_n=1000, 
+                       inpath=rawdatadir, 
+                       outpath=slimdatadir)
+```
+
+Reference:
+
+https://github.com/mlforsachid/Data621_Group4/blob/master/Final/subset_Citibike_data_files_1000.Rmd

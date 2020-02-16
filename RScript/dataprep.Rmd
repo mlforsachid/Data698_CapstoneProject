@@ -1,0 +1,476 @@
+---
+title: "Citibike Data Preparation"
+author: "Sachid Vijay Deshmukh, Ahmed Sajjad, Ann Liu-Ferrara"
+date: "2/14/2020"
+output: html_document
+---
+
+### Citibike data sampling plan and ingestion
+
+We downloaded Citibike data including 79 monthly files up to Jan 2020, around 100 million records. Due to limited computing power, it is difficult to analyze the entire universe of trip-by-trip, We only select every 1000th trip from each monthly file. The data process is documented in the script: getportion.Rmd 
+
+
+
+```{r load-libraries, echo=F,message=F,warning=F}
+library(tidyverse)
+library(lubridate)
+library(sp)
+library(Hmisc)
+library(corrplot)
+library(forcats)
+library(kableExtra)
+library(ggplot2)
+library(reshape)
+#library(DataExplorer)
+library(caret)
+```
+
+A function was created to read citibike monthly data sample files, it is located in RScript/read_CB_data_file.R. Due to data formats' inconsistency in multiple files as shown below, some conversions were mandatory in order to combine all files together. 
+
+* Data column names change slightly from month to month.
+* In some months, CitiBike specifies dates as YYYY-MM-DD, while in other months, dates are MM/DD/YYYY .  
+* In certain months, the timestamps include HH:MM:SS (as well as fractional seconds) while in other months, timestamps only include HH:MM , as seconds are omitted entirely.  
+* We encountered an unusual quirk which manifests itself just once a year, on the first Sunday of November, when clocks are rolled back an hour as Daylight Savings time changes to Standard time:  
+  + The files do not specify whether a timestamp is EDT or EST.  On any other date, this is not a problem, but the hour of 1am-2am EDT on that November Sunday is followed by an hour 1am-2am EST.
+  + If someone rents a bike at, say, 1:55am EDT (before the time change) and then returns it 15 minutes later, the time is now 1:10am (EST).  
+  + The difference in time timestamps suggests that the rental was negative 45 minutes, which is of course impossible!
+* Sometimes there is an unusually long interval between the start time of a bicycle rental and the time at which the system registers such rental as having concluded.
+
+```{r list-CitiBike-data, echo=T,warning=F,message=F}
+proj_dir <- "C:/Users/10121760/OneDrive - BD/Documents/cuny/2020Spring/Data698_CapstoneProject/"
+source(paste0(proj_dir, "RScript/read_CB_data_file.R"))
+slimdatadir <- paste0(proj_dir, "CitibikeDataSlim/")
+filenames=list.files(path=slimdatadir,pattern = '.csv$', full.names = T)    # ending with .csv ; not .zip
+length(filenames)
+#t(t(filenames))
+```
+
+#### Combine 79 data files, and save to RData folder. 
+
+```{r load-up-data-files, echo=T,warning=F,message=F}
+CB <- do.call(rbind,lapply(filenames,read_CB_data_file))
+save(CB, file = paste0(proj_dir, "RData/CB.RData"))
+```
+
+The saved RData file can be updated only when changes made to the above funtion; otherwise, each session we can load the saved file to prepare and build models. 
+
+```{r loaddatafile}
+load(file = paste0(proj_dir, "RData/CB.RData"))
+```
+
+
+\newpage
+
+#### Central Park daily weather data
+
+Also we obtained historical weather information for 2013-2019 from the NCDC (National Climatic Data Center) by submitting an online request to https://www.ncdc.noaa.gov/cdo-web/search .  Although the weather may vary slightly within New York City, we opted to use just the data associated with the Central Park observations as proxy for the entire city's weather.
+
+We believe that the above data provides a reasonable representation of the target population (all CitiBike rides) and the citywide weather.
+
+```{r weather-data, echo=T, message=F, warning=F}
+# Weather data is obtained from the  NCDC (National Climatic Data Center) via https://www.ncdc.noaa.gov/cdo-web/
+# click on search tool  https://www.ncdc.noaa.gov/cdo-web/search
+# select "daily summaries"
+# select Search for Stations
+# Enter Search Term "USW00094728" for Central Park Station: 
+# https://www.ncdc.noaa.gov/cdo-web/datasets/GHCND/stations/GHCND:USW00094728/detail
+
+## Perhaps we should rename the columns to more clearly reflect their meaning?
+weatherspec <- cols(
+  STATION = col_character(),
+  NAME = col_character(),
+  LATITUDE = col_double(),
+  LONGITUDE = col_double(),
+  ELEVATION = col_double(),
+  #DATE = col_date(format = "%F"),          #  readr::parse_datetime() :   "%F" = "%Y-%m-%d"
+  DATE = col_date(format = "%m/%d/%Y"), #col_date(format = "%F")
+  AWND = col_double(),                     # Average Daily Wind Speed
+  AWND_ATTRIBUTES = col_character(),
+  PGTM = col_double(),                    # Peak Wind-Gust Time
+  PGTM_ATTRIBUTES = col_character(),
+  PRCP = col_double(),                    # Amount of Precipitation
+  PRCP_ATTRIBUTES = col_character(),
+  SNOW = col_double(),                    # Amount of Snowfall
+  SNOW_ATTRIBUTES = col_character(),
+  SNWD = col_double(),                    # Depth of snow on the ground
+  SNWD_ATTRIBUTES = col_character(),
+  TAVG = col_double(),                    # Average Temperature (not populated)
+  TAVG_ATTRIBUTES = col_character(),
+  TMAX = col_double(),                    # Maximum temperature for the day
+  TMAX_ATTRIBUTES = col_character(),
+  TMIN = col_double(),                    # Minimum temperature for the day
+  TMIN_ATTRIBUTES = col_character(),
+  TSUN = col_double(),                    # Daily Total Sunshine (not populated)
+  TSUN_ATTRIBUTES = col_character(),
+  WDF2 = col_double(),                    # Direction of fastest 2-minute wind
+  WDF2_ATTRIBUTES = col_character(),
+  WDF5 = col_double(),                    # Direction of fastest 5-second wind
+  WDF5_ATTRIBUTES = col_character(),
+  WSF2 = col_double(),                    # Fastest 2-minute wind speed
+  WSF2_ATTRIBUTES = col_character(),
+  WSF5 = col_double(),                    # fastest 5-second wind speed
+  WSF5_ATTRIBUTES = col_character(),
+  WT01 = col_double(),                    # Fog
+  WT01_ATTRIBUTES = col_character(),
+  WT02 = col_double(),                    # Heavy Fog
+  WT02_ATTRIBUTES = col_character(),
+  WT03 = col_double(),                    # Thunder
+  WT03_ATTRIBUTES = col_character(),
+  WT04 = col_double(),                    # Sleet
+  WT04_ATTRIBUTES = col_character(),
+  WT06 = col_double(),                    # Glaze
+  WT06_ATTRIBUTES = col_character(),
+  WT08 = col_double(),                    # Smoke or haze
+  WT08_ATTRIBUTES = col_character(),
+  WT13 = col_double(),                    # Mist
+  WT13_ATTRIBUTES = col_character(),
+  WT14 = col_double(),                    # Drizzle
+  WT14_ATTRIBUTES = col_character(),
+  WT16 = col_double(),                    # Rain
+  WT16_ATTRIBUTES = col_character(),
+  WT18 = col_double(),                    # Snow      
+  WT18_ATTRIBUTES = col_character(),
+  WT19 = col_double(),                    # Unknown source of precipitation
+  WT19_ATTRIBUTES = col_character(),
+  WT22 = col_double(),                    # Ice fog
+  WT22_ATTRIBUTES = col_character()
+)
+
+weatherfile=paste0(proj_dir, "Data/NYC_Weather_Data_2013-2019.csv")
+# load all the daily weather data
+weather <- read_csv(weatherfile, col_types = weatherspec)
+# summary(weather)
+
+```
+
+Drop ATTR columns from weather, as they are not useful (and cause factor headaches)
+
+```{r drop-ATTR-columns, echo=T,message=F, warning=F}
+attr_indexes <- names(weather) %>% grep("ATTR",x = .)
+attr_names <- names(weather)[attr_indexes]
+# protect against manually running more than once, because it would delete everything if you do
+if(length(attr_indexes)>0) {
+   weather <- weather[,-attr_indexes]
+   #summary(weather)
+   #dim(weather)
+   }
+```
+
+### Data exploration
+
+#### Zero- and near zero-variance predictors
+
+```{r zero-values, echo=T, message=F,warning=F}
+## Check citibike data
+dim(CB)
+nzv.citi <- nearZeroVar(CB)
+nzv.citi
+
+## check weather data
+dim(weather)
+nzv.weather <- nearZeroVar(weather)
+weather <- weather[, -nzv.weather]
+nzv.weather
+dim(weather)
+```
+
+#### Missing data check
+
+```{r missing-values, echo=T, message=F,warning=F}
+## Check citibike data for missing values
+miss.cols = apply(CB, 2, function(x) any(is.na(x)))
+print(paste("Number of rows missing birth_year: ", sum(is.na(CB$birth_year)))) 
+
+## check weather data for missing values
+miss.weather = apply(weather, 2, function(x) any(is.na(x)))
+print(paste("Number of rows missing birth_year: ", sum(is.na(CB$birth_year)))) 
+
+```
+
+#### Examine variables 
+
+##### **trip_duration** 
+
+The trip_duration is specified in seconds, but there are some outliers which may be incorrect, as the value for Max is quite high:  `r summary(CB$trip_duration)["Max."]` seconds, or `r summary(CB$trip_duration)["Max."]/60/60/24` days.  We can assume that this data is bad, as nobody would willingly rent a bicycle for this period of time, given the fees that would be charged.  Here is a histogram of the original data distribution:
+
+```{r trip-duration, echo=T, warning=F, message=F}
+par(mfrow=c(2,1))
+hist(CB$trip_duration,col='lightgreen', breaks=100, 
+     main = "Histogram of trip_duration before adjustments",
+     xlab="trip_duration (in seconds)")
+hist(log(CB$trip_duration),col='lightblue', breaks=100,
+     main = "Histogram of log(trip_duration) before adjustments",
+     xlab="log(trip_duration) (in seconds)")
+```
+
+Summary of trip durations before censoring/truncation. Express trip duration in seconds, minutes, hours, days. Note: we needed to fix the November daylight savings problem to eliminate negative trip times
+
+```{r trip-duration-units-before-truncation, echo=T,message=F,warning=F}
+## Supplied seconds
+supplied_secs<-summary(CB$trip_duration)
+
+## Seconds
+CB$trip_duration_s = as.numeric(CB$e_time - CB$s_time,"secs")
+calc_secs<-summary(CB$trip_duration_s)
+
+## Minutes
+CB$trip_duration_m = as.numeric(CB$e_time - CB$s_time,"mins")
+calc_mins<-summary(CB$trip_duration_m)
+
+## Hours
+CB$trip_duration_h = as.numeric(CB$e_time - CB$s_time,"hours")
+calc_hours<-summary(CB$trip_duration_h)
+
+## Days
+CB$trip_duration_d = as.numeric(CB$e_time - CB$s_time,"days")
+calc_days <-summary(CB$trip_duration_d)
+
+rbind(supplied_secs, calc_secs, calc_mins, calc_hours, calc_days) %>% 
+  kable(caption = "Summary of Trip durations before truncation") %>%
+  kable_styling(c("bordered","striped"),latex_options =  "hold_position")
+```
+
+The above indicates that the duration of the trips (in seconds) includes values in the millions -- which likely reflects a trip which failed to be properly closed out.
+
+Delete cases with unreasonable trip_duration values. Let's assume that nobody would rent a bicycle for more than a specified timelimit (say, 3 hours), and drop any records which exceed 3 hours.
+
+```{r drop-long-trips, echo=T,warning=F, message=F}
+total_rows=dim(CB)[1]
+#print(paste("Initial number of trips: ", total_rows))
+
+# choose only trips that were at most 3 hrs, as longer trips may reflect an error
+# remove long trips from the data set -- something may be wrong (e.g., the system failed to properly record the return of a bike)
+longtripthreshold_s = 60 * 60 *3  # 10800 seconds = 180 minutes = 3 hours
+longtripthreshold_m = longtripthreshold_s / 60
+longtripthreshold_h = longtripthreshold_m / 60
+
+long_trips <- CB %>% filter(trip_duration_s > longtripthreshold_s)
+num_long_trips_removed = dim(long_trips)[1]
+pct_long_trips_removed = round(100*num_long_trips_removed / total_rows, 3)
+
+CB <- CB %>% filter(trip_duration <= longtripthreshold_s)
+reduced_rows = dim(CB)[1]
+
+print(paste0("Removed ", num_long_trips_removed, " trips (", pct_long_trips_removed, "%) of longer than ", longtripthreshold_h, " hours."))
+print(paste0("Remaining number of trips: ", reduced_rows))
+
+par(mfrow=c(2,1))
+hist(CB$trip_duration,col='lightgreen', breaks=100,
+     main = "Histogram of trip_duration AFTER adjustments",
+     xlab="trip_duration (in seconds)")
+
+hist(log(CB$trip_duration),col='lightblue', breaks=100,
+     main = "Histogram of log(trip_duration) before adjustments",
+     xlab="log(trip_duration, in seconds)")
+
+
+```
+
+
+Summary of trip durations AFTER censoring/truncation:     
+     
+After we eliminate cases which result in extreme values, the duration of the remaining trips is more reasonable.
+
+```{r trip-duration-units-after-censor-truncate, echo=T,message=F,warning=F}
+#express trip duration in seconds, minutes, hours, days
+# note: we needed to fix the November daylight savings problem to eliminate negative trip times
+
+#### Supplied seconds
+#print("Supplied Seconds:")
+supplied_secs<-summary(CB$trip_duration)
+
+#### Seconds
+CB$trip_duration_s = as.numeric(CB$e_time - CB$s_time,"secs")
+calc_secs<-summary(CB$trip_duration_s)
+
+#### Minutes
+CB$trip_duration_m = as.numeric(CB$e_time - CB$s_time,"mins")
+calc_mins<-summary(CB$trip_duration_m)
+
+#### Hours
+CB$trip_duration_h = as.numeric(CB$e_time - CB$s_time,"hours")
+calc_hours<-summary(CB$trip_duration_h)
+
+#### Days
+CB$trip_duration_d = as.numeric(CB$e_time - CB$s_time,"days")
+calc_days <-summary(CB$trip_duration_d)
+
+# library(kableExtra) # loaded above
+rbind(supplied_secs, calc_secs, calc_mins, calc_hours, calc_days) %>% 
+  kable(caption = "Summary of trip durations AFTER truncations:") %>% 
+  kable_styling(c("bordered","striped"),latex_options =  "hold_position")
+```
+
+We could have chosen to ***censor*** the data, in which case we would not drop observations, but would instead move them to a limiting value, such as three hours (for trip time) or an age of 90 years (for adjusting birth_year).  
+As there were few such cases, we instead decided to ***truncate*** the data by dropping such observations from the dataset.
+
+# **birth_year**
+
+Other inconsistencies concern the collection of birth_year, from which we can infer the age of the participant.  There are some months in which this value is omitted, while there are other months in which all values are populated.  However, there are a few records which suggest that the rider is a centenarian -- it seems highly implausible that someone born in the 1880s is cycling around Central Park -- but the data does have such anomalies.  Thus, a substantial amount of time was needed for detecting and cleaning such inconsistencies.
+
+The birth year for some users is as old as `r summary(CB$birth_year)["Min."]`, which is not possible:
+
+```{r birth-year, echo=T,message=F,warn=F}
+summary(CB$birth_year)
+hist(CB$birth_year, col="lightgreen", main="Histogram of birth_year")
+# Deduce age from trip date and birth year
+#library(lubridate) #loaded above
+CB$age <- year(CB$s_time) - CB$birth_year
+
+par(mfrow=c(1,2))
+hist(CB$age, col="lightblue",  
+     main="Histogram of inferred Age",
+     xlab="User Age, inferred from birth year")
+hist(log(CB$age), col="lightblue",  
+     main="Histogram of log(inferred Age)",
+     xlab="log(User Age, inferred from birth year)")
+
+```
+
+Remove trips associated with very old users (age>90), also remove trips associated with missing birth_year)  
+
+```{r age-and-birth-year, echo=T,message=F,warning=F}
+# choose only trips where the user was born after a certain year,  as older users may reflect an error
+age_threshhold = 90
+aged_trips <- CB %>% filter(age > age_threshhold)
+num_aged_trips_removed = dim(aged_trips)[1]
+pct_aged_trips_removed = round(100*num_aged_trips_removed / total_rows, 3)
+
+unknown_age_trips <- CB %>% filter(is.na(age))
+num_unknown_age_trips_removed = dim(unknown_age_trips)[1]
+pct_unknown_age_trips_removed = round(100*num_unknown_age_trips_removed / total_rows, 3)
+
+print(paste0("Removed ", num_aged_trips_removed, " trips (", pct_aged_trips_removed, "%) of users older than ", age_threshhold, " years."))
+
+print(paste0("Removed ", num_unknown_age_trips_removed, " trips (", pct_unknown_age_trips_removed, "%) of users where age is unknown (birth_year unspecified)."))
+
+CB <- CB %>% filter(age <= age_threshhold)
+reduced_rows = dim(CB)[1]
+print(paste0("Remaining number of trips: ", reduced_rows))
+
+par(mfrow=c(1,2))
+hist(CB$age, col="lightgreen",  main="Age, after deletions",
+     xlab="User Age, inferred from birth year")
+hist(log(CB$age), col="lightgreen",  main="log(Age), after deletions",
+     xlab="log(User Age, inferred from birth year)")
+
+```
+
+# **distance_km** 
+
+Compute distance between start and end stations 
+
+This is straight-line distance between (longitude,latitude) points -- it doesn't incorporate an actual bicycle route. There are services (e.g., from Google) which can compute and measure a recommended bicycle route between points, but use of such services requires a subscription and incurs a cost.
+
+```{r get-distance, echo=T,message=F,warning=F}
+# Compute the distance between start and end stations
+s_lat_long <- CB %>% select(c(s_lat,s_long)) %>%  as.matrix
+e_lat_long <- CB %>% select(c(e_lat,e_long)) %>%  as.matrix
+#library(sp) # loaded above
+CB$distance_km <- spDists(s_lat_long, e_lat_long, longlat=T, diagonal = TRUE)
+summary(CB$distance_km)
+maxdistance = summary(CB$distance_km)["Max."]
+hist(CB$distance_km, breaks=30, col="orange", 
+     main="histogram of estimated travel distance (in km)")
+
+```
+
+
+In this subset of the data, the maximum distance between stations is `r maxdistance` km.  In the data there are some stations for which the latitude and longitude are zero, which suggests that the distance between such a station and an actual station is many thousands of miles.  If such items exist, we will delete them:
+
+Delete unusually long distances
+
+```{r delete-long-distances,  echo=T,message=F,warning=F}
+## long distances?
+long_distances <- CB %>% filter(distance_km>50)
+
+if (dim(long_distances)[1]>0) {
+print(paste("Dropping ", dim(long_distances)[1], " trips because of unreasonably long distance travelled"))
+    print(t(long_distances))
+  
+## These items have a station where latitude and longitude are zero.
+## Drop them:
+
+  CB <- CB %>% filter(distance_km<50)
+
+  summary(CB$distance_km)
+  hist(CB$distance_km, breaks=30, col="lightgreen", main="Histogram of distance_km after dropping problem trips")
+} else {print("No unusually long distances were found in this subset of the data.")}
+
+```
+
+
+### Aggregate individual CitiBike trip data by day
+
+We will perform our calculations on an aggregated basis. We will group each day's rides together, but we will segment by user_type ("Subscriber" or "Customer") and by gender ("Male or "Female").  For each of these segments, there are some cases where the user_type is not specified, so we have designated that as "Unknown."  For gender, there are cases where the CitiBike data set contains a zero, which indicates that the gender of the user was not recorded.  
+
+For each day, we will aggregate the following items across each of the above groupings:
+
+* sum trip_duration
+* median trip_duration
+* sum of distance_km
+* sum of trip_fee
+* mean of age
+* count of number of trips on that day
+
+We will split the aggregated data into a training dataset, consisting of all (grouped, daily) aggregations from 2013-2018, and a test dataset, consisting of (grouped, daily) aggregations from 2019.
+
+We will then join each aggregated CitiBike data element with the corresponding weather obserservation for that date.
+
+```{r make-train-and-test-datasets, echo=T,message=F,warning=F}
+##CB$user_type[is.na(CB$user_type)] <- "UNKNOWN"    ## should  not be necessary to do this
+CB$gender <- recode_factor(CB$gender, '1' = "Male", '2' = "Female", '0' = "UNKNOWN")
+
+# make the training data set
+train <- CB %>% 
+              mutate(start_date = as.Date(s_time, format="%Y-%m-%d"),
+#                     user_type = as.character(user_type),
+                     train = 1) %>%
+              filter(start_date < '2019-01-01') %>%
+              group_by(start_date, user_type, train, gender) %>%
+              summarise(
+                sum_duration = sum(trip_duration), 
+                median_duration = median(trip_duration),
+                sum_distance_km = sum(distance_km),
+                # sum_trip_fee = sum(trip_fee),
+                avg_age = mean(age),
+                trips = n()
+              ) %>%
+              ungroup()
+
+train_rows = dim(train)[1]
+#summary(train)
+
+# make the test data set
+test <- CB %>% 
+              mutate(start_date = as.Date(s_time, format="%Y-%m-%d"),
+#                     user_type = as.character(user_type),
+                     train = 0) %>%
+              filter(start_date >= '2019-01-01') %>%
+              group_by(start_date, user_type, train, gender) %>%
+              summarise(
+                sum_duration = sum(trip_duration), 
+                median_duration = median(trip_duration),
+                sum_distance_km = sum(distance_km),
+                # sum_trip_fee = sum(trip_fee),
+                avg_age = mean(age),
+                trips = n()
+              ) %>%
+              ungroup()
+test_rows = dim(test)[1]
+
+```
+
+### Join train and test data with weather data 
+
+```{r joinweather}
+train_weather <- weather %>% inner_join(train, by = c("DATE" = "start_date" ))
+#dim(train_weather)
+
+# Join test with weather data (there should be no rows with missing values)
+test_weather <- weather %>% inner_join(test, by = c("DATE" = "start_date" )) 
+
+#dim(test_weather)
+```
+
+There are `r train_rows` rows of daily aggregated data in the training dataset, and `r test_rows` rows in the corresponding test dataset.
