@@ -48,16 +48,8 @@ length(filenames)
 #### Combine 79 data files, and save to RData folder. 
 
 ```{r load-up-data-files, echo=T,warning=F,message=F}
-CB <- do.call(rbind,lapply(filenames,read_CB_data_file))
-save(CB, file = paste0(proj_dir, "RData/CB.RData"))
+CB <- do.call(rbind,lapply(filenames, read_CB_data_file))
 ```
-
-The saved RData file can be updated only when changes made to the above funtion; otherwise, each session we can load the saved file to prepare and build models. 
-
-```{r loaddatafile}
-load(file = paste0(proj_dir, "RData/CB.RData"))
-```
-
 
 \newpage
 
@@ -304,7 +296,7 @@ rbind(supplied_secs, calc_secs, calc_mins, calc_hours, calc_days) %>%
 We could have chosen to ***censor*** the data, in which case we would not drop observations, but would instead move them to a limiting value, such as three hours (for trip time) or an age of 90 years (for adjusting birth_year).  
 As there were few such cases, we instead decided to ***truncate*** the data by dropping such observations from the dataset.
 
-# **birth_year**
+#### **birth_year**
 
 Other inconsistencies concern the collection of birth_year, from which we can infer the age of the participant.  There are some months in which this value is omitted, while there are other months in which all values are populated.  However, there are a few records which suggest that the rider is a centenarian -- it seems highly implausible that someone born in the 1880s is cycling around Central Park -- but the data does have such anomalies.  Thus, a substantial amount of time was needed for detecting and cleaning such inconsistencies.
 
@@ -356,7 +348,7 @@ hist(log(CB$age), col="lightgreen",  main="log(Age), after deletions",
 
 ```
 
-# **distance_km** 
+#### **distance_km** 
 
 Compute distance between start and end stations 
 
@@ -474,3 +466,13 @@ test_weather <- weather %>% inner_join(test, by = c("DATE" = "start_date" ))
 ```
 
 There are `r train_rows` rows of daily aggregated data in the training dataset, and `r test_rows` rows in the corresponding test dataset.
+
+Save datasets for modeling
+
+```{r save}
+save(CB, 
+     train_weather,
+     test_weather,
+     file = paste0(proj_dir, "RData/CB.RData"))
+
+```
