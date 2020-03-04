@@ -1,0 +1,19 @@
+---
+title: "Citibike Data Preparation"
+author: "Sachid Vijay Deshmukh, Ahmed Sajjad, Ann Liu-Ferrara"
+date: "2/14/2020"
+output: html_document
+---
+
+Adjust the path to locate the files locally - the path to the main repo folder "Data698_CapstoneProject/"
+
+```{r list-CitiBike-data, echo=T,warning=F,message=F}
+proj_dir <- "C:/Users/10121760/OneDrive - BD/Documents/cuny/2020Spring/Data698_CapstoneProject/"
+
+```
+The saved RData file can be updated only when changes made to the above funtion; otherwise, each session we can load the saved file to prepare and build models.
+
+```{r loaddata}
+load(file = paste0(proj_dir, "RData/CB.RData"))
+
+```
