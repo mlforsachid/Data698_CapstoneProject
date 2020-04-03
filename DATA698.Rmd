@@ -2,17 +2,18 @@
 title: "DATA698"
 author: "Sachid Vijay Deshmukh, Ann Liu-Ferrara, Ahmed Sajjad"
 date: "2/21/2020"
-output: html_document
+output:
+  html_document: default
+  pdf_document: default
 ---
 
-```{r setup, echo=F,message=F,warning=F}  
+```{r setup, echo=F, message=F, warning=F}  
 knitr::opts_chunk$set(echo = TRUE, fig.pos = 'h')
 mydir = "./"
 setwd(mydir)
 knitr::opts_knit$set(root.dir = mydir)
 options(digits=7,scipen=999,width=120)
 datadir = paste0(mydir,"/Data/")
-
 ```
 
 
@@ -29,9 +30,6 @@ library(kableExtra)
 library(ggplot2)
 library(reshape)
 library(dplyr)
-library(Boruta)
-library(mice)
-
 ```
 
 
@@ -174,7 +172,7 @@ ncol(city_bike_df)
 
 
 ### Weather Data
-```{r weather-data, echo=F, message=F, warning=F}
+```{r weather-data, echo=T, message=F, warning=F}
 # Weather data is obtained from the  NCDC (National Climatic Data Center) via https://www.ncdc.noaa.gov/cdo-web/
 # click on search tool  https://www.ncdc.noaa.gov/cdo-web/search
 # select "daily summaries"
@@ -249,28 +247,45 @@ weatherspec <- cols(
   WT22_ATTRIBUTES = col_character()
 )
 
-
-
 # load all the daily weather data
-weather <- read_csv(weatherfile,col_types = weatherspec)
-#summary(weather)
-head(weather)
-weather_df = as.data.frame(weather)
-weather_df$Date = as.Date(weather_df$DATE, orgin = '1970-01-01', format='%Y-%m-%d')
-#Imputation through mice package
-tempData <- mice(weather_df,m=5,maxit=5,meth='pmm',seed=500)
-weather_df <- complete(tempData)
-summary(tempData)
-head(weather_df)
-nrow(weather_df)
-ncol(weather_df)
+weather <- read_csv(weatherfile, col_types = weatherspec)
+weather_df1 = as.data.frame(weather)
 
+# Check the number of rows and columns in weather data frame
+nrow(weather_df1)
+ncol(weather_df1)
+
+# Select only those columns that are useful for our analysis
+weather_df = select(weather_df1, STATION, NAME, DATE, AWND, PRCP, SNOW, SNWD, TMAX, TMIN, WDF2, WDF5, WSF2, WSF5, WT01)
+
+# Check how many columns have empty values
+sapply(weather_df, function(x) sum(is.na(x)))
+
+# Perform Data Impuation on weather_df, replace empty/blank values with mean values
+weather_df$AWND[is.na(weather_df$AWND)] = mean(weather_df1$AWND, na.rm=TRUE)
+weather_df$SNOW[is.na(weather_df$SNOW)] = mean(weather_df1$SNOW, na.rm=TRUE)
+weather_df$WDF2[is.na(weather_df$WDF2)] = mean(weather_df1$WDF2, na.rm=TRUE)
+weather_df$WDF5[is.na(weather_df$WDF5)] = mean(weather_df1$WDF5, na.rm=TRUE)
+weather_df$WSF2[is.na(weather_df$WSF2)] = mean(weather_df1$WSF2, na.rm=TRUE)
+weather_df$WSF5[is.na(weather_df$WSF5)] = mean(weather_df1$WSF5, na.rm=TRUE)
+
+# Again, check if the imputation removed all empty/blank values with mean values
+sapply(weather_df, function(x) sum(is.na(x)))
+
+# City bike data number of rows and columns
+c(nrow(city_bike_df), ncol(city_bike_df))
+
+# Weather data number of rows and columns
+c(nrow(weather_df), ncol(weather_df))
+
+# Check the column names of city_bike_df and weather_df
 colnames(city_bike_df)
 colnames(weather_df)
+
+# Display head of city_bike_df and weather_df
+head(city_bike_df)
+head(weather_df)
 ```
-
-
-
 
 \newpage
 # 3. Exploratory Data Analysis
@@ -616,9 +631,9 @@ train <- CB %>%
               summarise(
                 mean_duration = mean(trip_duration), 
                 median_duration = median(trip_duration),
-                #sum_distance_km = sum(distance_km),
-                #sum_trip_fee = sum(trip_fee),
-                #avg_age = mean(age),
+                sum_distance_km = sum(distance_km),
+                sum_trip_fee = sum(trip_fee),
+                avg_age = mean(age),
                 trips = n()
               ) %>%
               ungroup()
@@ -646,93 +661,16 @@ test_rows = dim(test)[1]
 
 
 # Join train with weather data (there should be no rows with missing values)
-train_weather <- weather_df %>% inner_join(train, by = c("DATE" = "start_date" ))
+train_weather <- weather %>% inner_join(train, by = c("DATE" = "start_date" ))
 #dim(train_weather)
 
 # Join test with weather data (there should be no rows with missing values)
-test_weather <- weather_df %>% inner_join(test, by = c("DATE" = "start_date" )) 
+test_weather <- weather %>% inner_join(test, by = c("DATE" = "start_date" )) 
 
 #dim(test_weather)
 ```
 
 There are `r train_rows` rows of daily aggregated data in the training dataset, and `r test_rows` rows in the corresponding test dataset.
-
-\newpage
-### Selection of variables designated as "Important" by the Boruta algorithm
-
-There is a random-forest based algorithm known as "Boruta" which is useful in assessing whether each variable's "importance" in estimation of the target variable is "Confirmed", "Tentative", or "Rejected."   Here we execute the Boruta algorithm on the training dataset, which consists of aggregated daily ride metrics (from the CitiBike dataset) joined with daily weather observation metrics.
-
-The graph from the Boruta algoritm indicates the variables confirmed as important in green (on the right) while rejected variables are in red (on the left.)  The variables in the middle (in yellow) are "tentative."
-
-```{r Boruta-variable-selection, echo=FALSE, fig.height=10, fig.width=8, message=FALSE, warning=FALSE, eval=T}
-# library(kableExtra) # loaded above
-set.seed(777)
-num_cols <- length(names(train_weather))
-
-#### suppressed because it is very time consuming to run each time.  
-#### The result is the list of "important" variables, which was copied and hard-coded
-borutaOutput <- Boruta(trips ~ ., train_weather)
-#print(borutaOutput)
-plot(borutaOutput,  cex.axis=0.75, las=2, main="Boruta algorithm for Feature Selection", xlab="")
-
-# Here is the Confirmed/Tentative/Rejected Borua decision:
-BorutaFinal       <- borutaOutput$finalDecision
-#BorutaFinal
-
-# Here is the alphabetized list of Boruta decision:
-BorutaFinalAlpha  <- BorutaFinal[order(names(BorutaFinal))] %>% t %>% t
-#BorutaFinalAlpha
-
-# Extract the numerical median results from the Boruta algorithm
-BorutaMedian      <- apply(X = borutaOutput$ImpHistory, MARGIN = 2, FUN = median)
-
-# drop the three "shadow" variables from the list (shadowMax,shadowMean,shadowMin)
-BorutaMedian      <- BorutaMedian[BorutaMedian %>% names %>% grep("shadow",.,invert=T)]
-
-# alphabetize the list
-BorutaMedianAlpha <- BorutaMedian[order(names(BorutaMedian))]
-BorutaMedianAlphaNum <- as.numeric(BorutaMedianAlpha)
-
-BorutaMedianAlpha <- BorutaMedian[order(names(BorutaMedian))] %>% t %>% t
-
-BorutaJoinedAlpha <- cbind(BorutaFinalAlpha,BorutaMedianAlpha)
-
-BorutaFinalAlphaResults <- as.character(BorutaFinalAlpha)
-BorutaFinalAlphaNames <- BorutaFinal[names(BorutaFinal) %>% order] %>% names()
-
-# Here's the alphabetical list of the Boruta results:
-BorutaByAlpha <- cbind(BorutaFinalAlphaNames,BorutaFinalAlphaResults,BorutaMedianAlphaNum)
-#BorutaByAlpha %>% kable(caption="Alphabetical Boruta Results") %>% 
-#  kable_styling(c("bordered","striped"),
-#                full_width = F,
-#                latex_options =  "hold_position")
-
-# Here's the numerical list of the Boruta results (based upon median)
-BorutaByNum <- BorutaByAlpha[order(BorutaMedianAlphaNum),]
-BorutaByNum %>% kable(caption="Boruta results sorted by median value") %>% 
-  kable_styling(c("bordered","striped"),
-                full_width = F,
-                latex_options =  "hold_position")
-
-#plot(borutaOutput)
-#plot(borutaOutput, sort=FALSE)
-lz<-lapply(1:ncol(borutaOutput$ImpHistory),function(i) borutaOutput$ImpHistory[is.finite(borutaOutput$ImpHistory[,i]),i])
-names(lz) <- colnames(borutaOutput$ImpHistory)
-Labels <- sort(sapply(lz,median))
-
-#plot(borutaOutput, xlab = "", xaxt = "n")
-#axis(side = 1,las=2,labels = names(Labels), at = 1:ncol(borutaOutput$ImpHistory), cex.axis = 0.7)
-
-final.boruta <- TentativeRoughFix(borutaOutput)
-important <- getSelectedAttributes(final.boruta, withTentative = F)
-
-### drop sum_distance_km -- the correlation between this variable and the count of trips is 97 percent, so we cannot use it for prediction, as it is strongly driven by the number of trips
-important <- important[important!="sum_distance_km"]
-
-print(paste("Num important: ", length(important)))
-```
-
-
 
 
 # 5. Methodology 
