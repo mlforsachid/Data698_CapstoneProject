@@ -1,0 +1,716 @@
+---
+title: "DATA698"
+author: "Sachid Vijay Deshmukh, Ann Liu-Ferrara, Ahmed Sajjad"
+date: "2/21/2020"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, echo=F, message=F, warning=F}  
+knitr::opts_chunk$set(echo = TRUE, fig.pos = 'h')
+mydir = "./"
+setwd(mydir)
+knitr::opts_knit$set(root.dir = mydir)
+options(digits=7,scipen=999,width=120)
+datadir = paste0(mydir,"/Data/")
+```
+
+
+
+```{r load-libraries, echo=F,message=F,warning=F}
+### Load libraries
+library(tidyverse)
+library(lubridate)
+library(sp)
+library(Hmisc)
+library(corrplot)
+library(forcats)
+library(kableExtra)
+library(ggplot2)
+library(reshape)
+library(dplyr)
+```
+
+
+\newpage
+
+# 1. Abstract 
+
+<!-- Short summary of the research problem and its importance, what you do and what you find
+
+     A person reading your abstract should get a good sense of what problem you addressed and how you addressed it without having to look at the rest of the paper 
+-->
+
+Bicycling is an activity which yields many benefits:  Riders improve their health through exercise, while traffic congestion is reduced if riders move out of cars, with a corresponding reduction in pollution from carbon emissions.  In recent years, Bike Sharing has become popular in a growing list of cities around the world.  The NYC "CitiBike" bicycle sharing scheme went live (in midtown and downtown Manhattan) in 2013, and has been expanding ever since, both as measured by daily ridership as well as the expanding geographic footprint incorporating a growing number of "docking stations" as the system welcomes riders in Brooklyn, Queens, and northern parts of Manhattan which were not previously served.
+
+One problem that many bikeshare systems face is money.  An increase in the number of riders who want to use the system necessitates that more bikes be purchased and put into service in order to accomodate them.  Heavy ridership induces wear on the bikes, requiring for more frequent repairs.   However, an increase in the number of trips does not necessarily translate to an increase in revenue because riders who are clever can avoid paying surcharges by keeping the length of each trip below a specified limit (either 30 or 45 minutes, depending on user category.)
+
+We seek to examine CitiBike ridership data, joined with daily NYC weather data, to study the impact of weather on shared bike usage and generate a predictive model which can estimate the number of trips that would be taken on each day.  
+The goal is to estimate future demand which would enable the system operator to make expansion plans.
+
+Our finding is that ridership exhibits strong seasonality, with correlation to weather-related variables such as daily temperature and precipitation.  Additionally, ridership is segmented by by user_type (annual subscribers use the system much more heavilty than casual users), gender (there are many more male users than female) and age (a large number of users are clustered in their late 30s).
+
+
+## Keywords 
+
+Bikeshare, Weather, Cycling, CitiBike, New York City
+
+# 2. Introduction 
+
+<!-- * What is the general area? What is the exact problem you are addressing?
+
+* Why is it important? (why should I be interested as a reader?)
+
+* What are the objectives of the research? What are your hypotheses?
+
+* How is the paper structured?
+-->
+
+Since 2013 a shared bicycle system known as [CitiBike](http://www.citibikenyc.com) has been available in New York City.  The benefits to having such a system include reducing New Yorkers' dependence on automobiles and encouraging public health through the exercise attained by cycling. Additionally, users who would otherwise spend money on public transit may find bicycling more economical -- so long as they are aware of CitiBike's pricing constraints.   
+
+There are currently about 12,000 shared bikes which users can rent from about 750 [docking stations](https://member.citibikenyc.com/map/) located in Manhattan and in western portions of Brooklyn and Queens.  A rider can pick up a bike at one station and return it at a different station. The system has been expanding each year, with increases in the number of bicycles available and expansion of the geographic footprint of docking stations.  For planning purposes, the system operator needs to project future ridership in order to make good investments.
+
+The available usage data provides a wealth of information which can be mined to seek trends in usage.  With such intelligence, the company would be better positioned to determine what actions might optimize its revenue stream.
+
+* Because of weather, ridership is expected to be lower during the winter months, and on foul-weather days during the rest of the year, than on a warm and sunny summer day.  Using the weather data we can seek to model the relationship between bicycle ridership and fair/foul or hot/cold weather.
+
+* What are the differences in rental patterns between annual members (presumably, local residents) vs. casual users (presumably, tourists?)
+
+* Is there any significant relationship between the age and/or gender of the bicycle renter vs. the rental patterns?
+
+The rest of the paper proceeds as follows:   
+
+* In **section 2** we review literature on bike share systems, some of which examine the relationship of weather on ridership.
+* In **section 3** we examine the methodology from the standpoint of data sources, collection, cleaning, exploratory data analysis (EDA), limitations, aggregation, and statistical modeling choices.
+* In **section 4** we discuss results from our modeling.
+* In **section 5** we present discussion of the challenges faced in this project and analysis that we commenced but chose to discard.
+* In **section 6** we present a conclusion and summary of the results,and discuss proposed future research and enhancements.
+* In the **appendix** we provide graphs, tables, and a listing of the R statistical programming code used to perform the data manipulation, modeling, and visualization.
+
+# 3. Literature review 
+
+**Westland** et al. examined consumer behavior in bike sharing in Beijing using a deep-learning model incorporating weather and air quality, time-series of demand, and geographical location; later adding customer segmentation. [@Westland_Mou_Yin_2019]
+
+**Jia** et al. performed a retrospective study of dockless bike sharing in Shanghai to determine whether introduction of such program increased cycling.  Their methodology was to survey people in various neighborhoods where the areas were selected by sampling, and the individuals were selected by interviewing individuals on the street. [@Jia_Ding_Gebel_Chen_Zhang_Ma_Fu_2019]
+
+**Jia and Fu** further examined whether dockless bicycle-sharing programs promote changes
+in travel mode in commuting and non-commuting trips, as well as the association between
+change in travel mode and potential correlates, as part of the same Shanghai study. [@Jia_Fu_2019]
+
+**Dell'Amico** et al. modeled bike sharing rebalancing programs initially in Reggio Emilia, Italy using branch-and-cut algorithms. [@DellAmico_Hadjicostantinou_Iori_Novellani_2014]
+
+In a more recent paper, **Dell'Amico** et al. examined the bike-sharing rebalancing problem with Stochastic Demands, aimed at determining minimum cost routes for a fleet of homogeneous vehicles in order to redistribute bikes among stations. [@DellAmico_Iori_Novellani_Subramanian_2018]
+
+**Zhou** analyzed massive bike-sharing data in Chicago, constructing a bike flow similarity graph and using a
+fast-greedy algorithm to detect spatial communities of biking flows. He examined the questions 1. How do bike flow patterns vary as a result of time, weekday or weekend, and user groups? 2. Given the flow patterns, what was the
+spatiotemporal distribution of the over-demand for bikes and docks in 2013 and 2014?  [@Zhou_2015]
+
+**Hosford** et al. surveyed participants in Vancouver, Canada and determined that public bicycle share programs are not used equally by all segments of the population. In many cities, program members tend to be male, Caucasian, employed, and have higher educations and incomes compared to the general population.  Further, their study determined that the majority of bicycle share trips replace trips previously made by walking or public transit, indicating that bicycle share appeals to people who already use active
+and sustainable modes of transportation [@Hosford_Lear_Fuller_Teschke_Therrien_Winters_2018]
+
+In another paper, **Hosford** et al. determined that that the implementation
+of the public bicycle share program in Vancouver was
+associated with greater increases in bicycling for those living and
+working inside the bicycle share service area relative to those outside
+the service area in the early phase of implementation, but this effect did
+not sustain over time. [@Hosford_Fuller_Lear_Teschke_Gauvin_Brauer_Winters_2018]
+
+**Schmidt** observed that the number of bike-sharing programs worldwide grew from 5 in 2005 to 1,571 in 2018. He further noted that disparities in bike-sharing usage are evident around the country, with users skewing towards younger white men. [@Schmidt_2018]
+
+**Wang** et al. examined the rebalancing problem and determined that the fluctuation of the available bikes and docks is not only caused by the user but also by the operators’ own (inefficient) rebalancing activities; they propose a data-driven model to generate an optimal rebalancing model while minimizing the cost of moving the bikes.  [@Wang_He_Zhang_Shu_Liu_Gu_Liu_Lee_Son_2018]
+
+**Vogel and Mattfeld** observe that Short rental times and one-way use lead to imbalances in the spatial distribution of bikes at stations over time, and present a case study demonstrating that Data Mining applied to operational data offers insight into typical usage patterns of bike-sharing systems and is used to forecast bike demand with the aim of supporting and improving strategic and operational planning.  They analyze both operational data from Vienna's shared bike rental system as well as local weather data over the period. [@Vogel_Mattfeld_2011]
+
+**Fuller** et al. examined the impact of a public transit strike (November 2016 in Philadelphia) on usage of the bike share service in that city. [@Fuller_Luan_Buote_Auchincloss_2019]
+
+In an earlier study, **Fuller** et al. examined bikeshare in Montreal by collecting samples prior to the launch of the program, and following each of the first two seasons. [Unlike other cities such as New York, the Montreal bike share system does not operate year-round.  Rather, because of the especially harsh winters, their bikeshare system is dismantled each fall and reinstalled each spring.] Fuller's methodology incorporated a 5-step logistic regression in which the weather variables entered at step 4; this rendered nonsignificant the differences between the three survey periods. [@Fuller_Gauvin_Kestens_Daniel_Fournier_Morency_Drouin_2013]
+
+**Faghih-Imani and Eluru** study the decision process involved in identifying destination locations after picking up the bicycle at a BSS station. 
+In the traditional destination/location choice approaches, the model frameworks implicitly assume that the influence of exogenous factors on the destination preferences is constant across the entire population. 
+They propose a *finite mixture multinomial logit* (FMMNL) model that accommodates such heterogeneity by probabilistically assigning trips to different segments and estimating segment-specific destination choice models for each segment. 
+Unlike the traditional destination-choice-based *multinomial logit* (MNL) model or *mixed multinomial logit* (MMNL), in an FMMNL model, we can consider the effect of fixed attributes across destinations such as users’ or origins’ attributes in the decision process.
+[@Faghih-Imani_Eluru_2018]
+
+**An** et al. examine weather and cycling in New York City and find that weather impacts cycling rates
+more than topography, infrastructure, land use mix, calendar events, and peaks. They do so by exploring a series of interaction effects, which each capture the extent to which two characteristics occurring simultaneously
+exert a combinatorial effect on cycling ridership -- e.g, how is cycling impacted when it is both wet and a weekend day or humid day in the hilliest parts of the cycling network? [@An_Zahnow_Pojani_Corcoran_2019]
+
+**Heaney** et al. examine the relation between ambient temperature and bikeshare usage and to project how climate change-induced increasing ambient temperatures may influence active transportation in New York City.
+[@Heaney_Carrión_Burkart_Lesk_Jack_2019]
+
+In the 1990s, **Nankervis** examined the effect of weather and climate on university student bicycle commuting patterns in Melbourne, Australia by examining counts of parked bicycles at local universities and correlating with the weather for each day, finding that the deterrent effect of bad weather on commuting was less than commonly believed (though still significiant.) [@Nankervis_1999]
+
+# 4. Data Sources 
+
+## Data sources and uploading
+
+We obtained data from two sources:  
+
+### 1. CitiBike trip dataset
+
+CitiBike makes a vast amount of [data](https://www.citibikenyc.com/system-data) available regarding system usage as well as sales of memberships and short-term passes.  
+
+For [each month](https://s3.amazonaws.com/tripdata/index.html) since the system's inception, there is a file containing details of (almost) every trip.  (Certain "trips" are omitted from the dataset.  For example, if a user checks out a bike from a dock but then returns it within one minute, the system drops such a "trip" from the listing, as such "trips" are not interesting.)
+
+There are currently 77 monthly data files for the New York City bikeshare system, spanning July 2013 through November 2019.  Each file contains a line for every trip.  The number of trips per month varies from as few as 200,000 during winter months in the system's early days to more than 2 million trips this past summer.  The total number of entries was more than 90 million, resulting in 17GB of data.    Because of the computational limitations which this presented, we created samples of 1/1000 and 1/100 of the data.  The samples were created deterministically, by subsetting the files on each 1000th (or, 100th) row.  
+
+### 2. Central Park daily weather data
+
+Also we obtained historical weather information for 2013-2019 from the NCDC (National Climatic Data Center) by submitting an online request to https://www.ncdc.noaa.gov/cdo-web/search .  Although the weather may vary slightly within New York City, we opted to use just the data associated with the Central Park observations as proxy for the entire city's weather.
+
+We believe that the above data provides a reasonable representation of the target population (all CitiBike rides) and the citywide weather.
+
+
+```{r loaddatafile}
+load(file='DATA/CB.RData')
+city_bike_df = as.data.frame(CB)
+head(city_bike_df)
+nrow(city_bike_df)
+ncol(city_bike_df)
+```
+
+
+### Weather Data
+```{r weather-data, echo=T, message=F, warning=F}
+# Weather data is obtained from the  NCDC (National Climatic Data Center) via https://www.ncdc.noaa.gov/cdo-web/
+# click on search tool  https://www.ncdc.noaa.gov/cdo-web/search
+# select "daily summaries"
+# select Search for Stations
+# Enter Search Term "USW00094728" for Central Park Station: 
+# https://www.ncdc.noaa.gov/cdo-web/datasets/GHCND/stations/GHCND:USW00094728/detail
+# "add to cart"
+
+
+weatherfilenames=list.files(path="./",pattern = '.csv$', full.names = T)    # ending with .csv ; not .zip
+#weatherfilenames
+weatherfile <- "DATA/NYC_Weather_Data_2013-2019.csv"
+
+## Perhaps we should rename the columns to more clearly reflect their meaning?
+weatherspec <- cols(
+  STATION = col_character(),
+  NAME = col_character(),
+  LATITUDE = col_double(),
+  LONGITUDE = col_double(),
+  ELEVATION = col_double(),
+  DATE = col_date(format = "%F"),          #  readr::parse_datetime() :   "%F" = "%Y-%m-%d"
+  #DATE = col_date(format = "%m/%d/%Y"), #col_date(format = "%F")
+  AWND = col_double(),                     # Average Daily Wind Speed
+  AWND_ATTRIBUTES = col_character(),
+  PGTM = col_double(),                    # Peak Wind-Gust Time
+  PGTM_ATTRIBUTES = col_character(),
+  PRCP = col_double(),                    # Amount of Precipitation
+  PRCP_ATTRIBUTES = col_character(),
+  SNOW = col_double(),                    # Amount of Snowfall
+  SNOW_ATTRIBUTES = col_character(),
+  SNWD = col_double(),                    # Depth of snow on the ground
+  SNWD_ATTRIBUTES = col_character(),
+  TAVG = col_double(),                    # Average Temperature (not populated)
+  TAVG_ATTRIBUTES = col_character(),
+  TMAX = col_double(),                    # Maximum temperature for the day
+  TMAX_ATTRIBUTES = col_character(),
+  TMIN = col_double(),                    # Minimum temperature for the day
+  TMIN_ATTRIBUTES = col_character(),
+  TSUN = col_double(),                    # Daily Total Sunshine (not populated)
+  TSUN_ATTRIBUTES = col_character(),
+  WDF2 = col_double(),                    # Direction of fastest 2-minute wind
+  WDF2_ATTRIBUTES = col_character(),
+  WDF5 = col_double(),                    # Direction of fastest 5-second wind
+  WDF5_ATTRIBUTES = col_character(),
+  WSF2 = col_double(),                    # Fastest 2-minute wind speed
+  WSF2_ATTRIBUTES = col_character(),
+  WSF5 = col_double(),                    # fastest 5-second wind speed
+  WSF5_ATTRIBUTES = col_character(),
+  WT01 = col_double(),                    # Fog
+  WT01_ATTRIBUTES = col_character(),
+  WT02 = col_double(),                    # Heavy Fog
+  WT02_ATTRIBUTES = col_character(),
+  WT03 = col_double(),                    # Thunder
+  WT03_ATTRIBUTES = col_character(),
+  WT04 = col_double(),                    # Sleet
+  WT04_ATTRIBUTES = col_character(),
+  WT06 = col_double(),                    # Glaze
+  WT06_ATTRIBUTES = col_character(),
+  WT08 = col_double(),                    # Smoke or haze
+  WT08_ATTRIBUTES = col_character(),
+  WT13 = col_double(),                    # Mist
+  WT13_ATTRIBUTES = col_character(),
+  WT14 = col_double(),                    # Drizzle
+  WT14_ATTRIBUTES = col_character(),
+  WT16 = col_double(),                    # Rain
+  WT16_ATTRIBUTES = col_character(),
+  WT18 = col_double(),                    # Snow      
+  WT18_ATTRIBUTES = col_character(),
+  WT19 = col_double(),                    # Unknown source of precipitation
+  WT19_ATTRIBUTES = col_character(),
+  WT22 = col_double(),                    # Ice fog
+  WT22_ATTRIBUTES = col_character()
+)
+
+# load all the daily weather data
+weather <- read_csv(weatherfile, col_types = weatherspec)
+weather_df1 = as.data.frame(weather)
+
+# Check the number of rows and columns in weather data frame
+nrow(weather_df1)
+ncol(weather_df1)
+
+# Select only those columns that are useful for our analysis
+weather_df = select(weather_df1, STATION, NAME, DATE, AWND, PRCP, SNOW, SNWD, TMAX, TMIN, WDF2, WDF5, WSF2, WSF5, WT01)
+
+# Check how many columns have empty values
+sapply(weather_df, function(x) sum(is.na(x)))
+
+# Perform Data Impuation on weather_df, replace empty/blank values with mean values
+weather_df$AWND[is.na(weather_df$AWND)] = mean(weather_df1$AWND, na.rm=TRUE)
+weather_df$SNOW[is.na(weather_df$SNOW)] = mean(weather_df1$SNOW, na.rm=TRUE)
+weather_df$WDF2[is.na(weather_df$WDF2)] = mean(weather_df1$WDF2, na.rm=TRUE)
+weather_df$WDF5[is.na(weather_df$WDF5)] = mean(weather_df1$WDF5, na.rm=TRUE)
+weather_df$WSF2[is.na(weather_df$WSF2)] = mean(weather_df1$WSF2, na.rm=TRUE)
+weather_df$WSF5[is.na(weather_df$WSF5)] = mean(weather_df1$WSF5, na.rm=TRUE)
+
+# Again, check if the imputation removed all empty/blank values with mean values
+sapply(weather_df, function(x) sum(is.na(x)))
+
+# City bike data number of rows and columns
+c(nrow(city_bike_df), ncol(city_bike_df))
+
+# Weather data number of rows and columns
+c(nrow(weather_df), ncol(weather_df))
+
+# Check the column names of city_bike_df and weather_df
+colnames(city_bike_df)
+colnames(weather_df)
+
+# Display head of city_bike_df and weather_df
+head(city_bike_df)
+head(weather_df)
+```
+
+\newpage
+# 3. Exploratory Data Analysis
+
+```{r trip-duration, echo=F, warning=F, message=F}
+#### Histogram of trip_duration, log(trip_duration)
+par(mfrow=c(2,1))
+hist(city_bike_df$trip_duration, col='lightgreen', breaks=100,  main = "Histogram of trip_duration before adjustments", xlab="trip_duration (in seconds)")
+hist(log(city_bike_df$trip_duration), col='lightblue', breaks=100, main = "Histogram of log(trip_duration) before adjustments", xlab="log(trip_duration) (in seconds)")
+```
+
+```{r trip-duration-units-before-truncation, echo=F,message=F,warning=F}
+#### Summary of trip durations before censoring/truncation:
+#express trip duration in seconds, minutes, hours, days
+# note: we needed to fix the November daylight savings problem to eliminate negative trip times
+
+#### Supplied seconds
+supplied_secs<-summary(CB$trip_duration)
+
+#### Seconds
+CB$trip_duration_s = as.numeric(CB$e_time - CB$s_time,"secs")
+calc_secs<-summary(CB$trip_duration_s)
+
+#### Minutes
+CB$trip_duration_m = as.numeric(CB$e_time - CB$s_time,"mins")
+calc_mins<-summary(CB$trip_duration_m)
+
+#### Hours
+CB$trip_duration_h = as.numeric(CB$e_time - CB$s_time,"hours")
+calc_hours<-summary(CB$trip_duration_h)
+
+#### Days
+CB$trip_duration_d = as.numeric(CB$e_time - CB$s_time,"days")
+calc_days <-summary(CB$trip_duration_d)
+
+# library(kableExtra) # loaded above
+rbind(supplied_secs, calc_secs, calc_mins, calc_hours, calc_days) %>% 
+  kable(caption = "Summary of Trip durations before truncation") %>%
+  kable_styling(c("bordered","striped"),latex_options =  "hold_position")
+```
+
+The above indicates that the duration of the trips (in seconds) includes values in the millions -- which likely reflects a trip which failed to be properly closed out.
+
+
+\newpage
+#### Delete cases with unreasonable trip_duration values
+Let's assume that nobody would rent a bicycle for more than a specified timelimit (say, 3 hours), and drop any records which exceed this:
+
+```{r drop-long-trips, echo=F,warning=F, message=F}
+total_rows=dim(CB)[1]
+#print(paste("Initial number of trips: ", total_rows))
+
+# choose only trips that were at most 3 hrs, as longer trips may reflect an error
+# remove long trips from the data set -- something may be wrong (e.g., the system failed to properly record the return of a bike)
+longtripthreshold_s = 60 * 60 *3  # 10800 seconds = 180 minutes = 3 hours
+longtripthreshold_m = longtripthreshold_s / 60
+longtripthreshold_h = longtripthreshold_m / 60
+
+long_trips <- CB %>% filter(trip_duration_s > longtripthreshold_s)
+num_long_trips_removed = dim(long_trips)[1]
+pct_long_trips_removed = round(100*num_long_trips_removed / total_rows, 3)
+
+CB <- CB %>% filter(trip_duration <= longtripthreshold_s)
+reduced_rows = dim(CB)[1]
+
+print(paste0("Removed ", num_long_trips_removed, " trips (", pct_long_trips_removed, "%) of longer than ", longtripthreshold_h, " hours."))
+print(paste0("Remaining number of trips: ", reduced_rows))
+
+par(mfrow=c(2,1))
+hist(CB$trip_duration,col='lightgreen', breaks=100, main = "Histogram of trip_duration AFTER adjustments", xlab="trip_duration (in seconds)")
+
+hist(log(CB$trip_duration),col='lightblue', breaks=100, main = "Histogram of log(trip_duration) before adjustments", xlab="log(trip_duration, in seconds)")
+```
+
+
+\newpage
+#### Examine birth_year
+
+Other inconsistencies concern the collection of birth_year, from which we can infer the age of the participant.  There are some months in which this value is omitted, while there are other months in which all values are populated.  However, there are a few records which suggest that the rider is a centenarian -- it seems highly implausible that someone born in the 1880s is cycling around Central Park -- but the data does have such anomalies.  Thus, a substantial amount of time was needed for detecting and cleaning such inconsistencies.
+
+The birth year for some users is as old as `r summary(CB$birth_year)["Min."]`, which is not possible:
+
+```{r birth-year, echo=F,message=F,warn=F}
+summary(CB$birth_year)
+hist(CB$birth_year, col="lightgreen", main="Histogram of birth_year")
+# Deduce age from trip date and birth year
+#library(lubridate) #loaded above
+CB$age <- year(CB$s_time) - CB$birth_year
+
+par(mfrow=c(1,2))
+hist(CB$age, col="lightblue", main="Histogram of inferred Age", xlab="User Age, inferred from birth year")
+hist(log(CB$age), col="lightblue",  main="Histogram of log(inferred Age)", xlab="log(User Age, inferred from birth year)")
+```
+
+\newpage
+#### Remove trips associated with very old users (age>90)
+#### (Also: remove trips associated with missing birth_year)  
+
+```{r age-and-birth-year, echo=F,message=F,warning=F}
+
+# choose only trips where the user was born after a certain year,  as older users may reflect an error
+age_threshhold = 90
+aged_trips <- CB %>% filter(age > age_threshhold)
+num_aged_trips_removed = dim(aged_trips)[1]
+pct_aged_trips_removed = round(100*num_aged_trips_removed / total_rows, 3)
+
+unknown_age_trips <- CB %>% filter(is.na(age))
+num_unknown_age_trips_removed = dim(unknown_age_trips)[1]
+pct_unknown_age_trips_removed = round(100*num_unknown_age_trips_removed / total_rows, 3)
+
+print(paste0("Removed ", num_aged_trips_removed, " trips (", pct_aged_trips_removed, "%) of users older than ", age_threshhold, " years."))
+print(paste0("Removed ", num_unknown_age_trips_removed, " trips (", pct_unknown_age_trips_removed, "%) of users where age is unknown (birth_year unspecified)."))
+
+CB <- CB %>% filter(age <= age_threshhold)
+reduced_rows = dim(CB)[1]
+print(paste0("Remaining number of trips: ", reduced_rows))
+
+par(mfrow=c(1,2))
+hist(CB$age, col="lightgreen", main="Age, after deletions", xlab="User Age, inferred from birth year")
+hist(log(CB$age), col="lightgreen",  main="log(Age), after deletions", xlab="log(User Age, inferred from birth year)")
+```
+
+
+\newpage
+#### Compute distance between start and end stations 
+
+This is straight-line distance between (longitude,latitude) points -- it doesn't incorporate an actual bicycle route.   
+There are services (e.g., from Google) which can compute and measure a recommended bicycle route between points, but use of such services requires a subscription and incurs a cost.
+
+```{r get-distance, echo=F,message=F,warning=F}
+# Compute the distance between start and end stations
+s_lat_long <- CB %>% select(c(s_lat,s_long)) %>%  as.matrix
+e_lat_long <- CB %>% select(c(e_lat,e_long)) %>%  as.matrix
+#library(sp) # loaded above
+CB$distance_km <- spDists(s_lat_long, e_lat_long, longlat=T, diagonal = TRUE)
+summary(CB$distance_km)
+maxdistance = summary(CB$distance_km)["Max."]
+hist(CB$distance_km, breaks=30, col="orange", 
+     main="histogram of estimated travel distance (in km)")
+```
+
+In this subset of the data, the maximum distance between stations is `r maxdistance` km.  In the data there are some stations for which the latitude and longitude are zero, which suggests that the distance between such a station and an actual station is many thousands of miles.  If such items exist, we will delete them:
+
+#### Delete unusually long distances
+
+```{r delete-long-distances,  echo=F,message=F,warning=F}
+### long distances?
+long_distances <- CB %>% filter(distance_km>50)
+
+if (dim(long_distances)[1]>0) {
+print(paste("Dropping ", dim(long_distances)[1], " trips because of unreasonably long distance travelled"))
+    print(t(long_distances))
+  
+### These items have a station where latitude and longitude are zero.
+### Drop them:
+
+  CB <- CB %>% filter(distance_km<50)
+
+  summary(CB$distance_km)
+  hist(CB$distance_km, breaks=30, col="lightgreen", main="Histogram of distance_km after dropping problem trips")
+} else {print("No unusually long distances were found in this subset of the data.")}
+```
+
+\newpage
+#### Compute usage fee
+
+There is a time-based usage fee for rides longer than an initial period:
+
+* For **user_type=Subscriber**, the fee is **$2.50 per 15 minutes** following an initial free 45 minutes per ride.
+* For **user_type=Customer**, the fee is **$4.00 per 15 minutes** following an initial free 30 minutes per ride.
+* There are some cases where the user type is not specified (we have relabeled as "UNKNOWN", and we do note estimate usage fees for such trips.)
+
+
+
+```{r get_trip-fee, echo=F,warning=F,message=F}
+
+CB$trip_fee <- 0
+CB$trip_fee[CB$user_type=="Subscriber"] <- 2.50 * (ceiling(CB$trip_duration_m[CB$user_type=="Subscriber"]  / 15)-3)  # first 45 minutes are free
+CB$trip_fee[CB$user_type=="Customer"]   <- 4.00 * (ceiling(CB$trip_duration_m[CB$user_type=="Customer"]  / 15)-2)  # first 30 minutes are free
+CB$trip_fee[CB$user_type=="UNKNOWN"] <- 0   # we don't know the fee structure for "UNKNOWN", so assume zero
+CB$trip_fee[CB$trip_fee<0] <- 0   # fee is non-negative
+
+#summary(CB$trip_fee)
+#print("Table of trip_fee:")
+#table(CB$trip_fee,dnn="Fee Amount")  %>% 
+#  kable(caption="Table of trip_fees:") %>% 
+#  kable_styling(c("bordered","striped"),latex_options =  "hold_position")
+
+par(mfrow=c(1,2))
+hist(CB$trip_fee,breaks=40,col="yellow", main="Histogram of trip_fee (most trips incur no fee)")
+hist(CB$trip_fee[CB$trip_fee>0],breaks=32,col="lightgreen", main = "Histogram of trip_fee excluding zeros (leftmost bar = $2.50)")
+
+```
+
+```{r chunk22-trip-duration-units-after-censor-truncate, eval=T}
+#### Summary of trip durations AFTER censoring/truncation:
+
+#express trip duration in seconds, minutes, hours, days
+# note: we needed to fix the November daylight savings problem to eliminate negative trip times
+
+#### Supplied seconds
+#print("Supplied Seconds:")
+supplied_secs<-summary(CB$trip_duration)
+
+#### Seconds
+CB$trip_duration_s = as.numeric(CB$e_time - CB$s_time,"secs")
+calc_secs<-summary(CB$trip_duration_s)
+
+#### Minutes
+CB$trip_duration_m = as.numeric(CB$e_time - CB$s_time,"mins")
+calc_mins<-summary(CB$trip_duration_m)
+
+#### Hours
+CB$trip_duration_h = as.numeric(CB$e_time - CB$s_time,"hours")
+calc_hours<-summary(CB$trip_duration_h)
+
+#### Days
+CB$trip_duration_d = as.numeric(CB$e_time - CB$s_time,"days")
+calc_days <-summary(CB$trip_duration_d)
+
+# library(kableExtra) # loaded above
+rbind(supplied_secs, calc_secs, calc_mins, calc_hours, calc_days) %>% 
+  kable(caption = "Summary of trip durations - AFTER truncations:") %>%
+  kable_styling(c("bordered","striped"),latex_options =  "hold_position")
+```
+
+We could have chosen to ***censor*** the data, in which case we would not drop observations, but would instead move them to a limiting value, such as three hours (for trip time) or an age of 90 years (for adjusting birth_year).  
+As there were few such cases, we instead decided to ***truncate*** the data by dropping such observations from the dataset.
+
+#### Limitations and Challenges in uploading and analyzing this data
+
+##### Data Size
+
+Because there is so much data, it is difficult to analyze the entire universe of trip-by-trip data unless one has high-performance computational resources.
+
+##### Data formatting inconsistencies from month to month:
+
+* Data column names change slightly from month to month.
+* In some months, CitiBike specifies dates as YYYY-MM-DD, while in other months, dates are MM/DD/YYYY .  
+* In certain months, the timestamps include HH:MM:SS (as well as fractional seconds) while in other months, timestamps only include HH:MM , as seconds are omitted entirely.  
+* We encountered an unusual quirk which manifests itself just once a year, on the first Sunday of November, when clocks are rolled back an hour as Daylight Savings time changes to Standard time:  
+  + The files do not specify whether a timestamp is EDT or EST.  On any other date, this is not a problem, but the hour of 1am-2am EDT on that November Sunday is followed by an hour 1am-2am EST.
+  + If someone rents a bike at, say, 1:55am EDT (before the time change) and then returns it 15 minutes later, the time is now 1:10am (EST).  
+  + The difference in time timestamps suggests that the rental was negative 45 minutes, which is of course impossible!
+* Sometimes there is an unusually long interval between the start time of a bicycle rental and the time at which the system registers such rental as having concluded.
+
+
+```{r CBlite, echo=F, message=F, warning=F}
+#### Make a smaller dataset, numeric, without multicollinearities, for correlation calculations
+# extract selected fields
+CBlite  <- select(CB, c(trip_duration, trip_fee, distance_km, 
+                        s_station_id, s_lat, s_long,
+                        e_station_id, e_lat, e_long,
+                        user_type, gender, age))
+
+#make numeric variables
+CBlite$user_type <- as.integer(CBlite$user_type)
+CBlite$gender <- as.integer(CBlite$gender)
+
+# function to revert factor back to its numeric levels
+as.numeric.factor <- function(x) {as.numeric(levels(x))[x]}
+
+CBlite$s_station_id <- as.numeric.factor(CBlite$s_station_id)
+CBlite$e_station_id <- as.numeric.factor(CBlite$e_station_id)
+```
+
+\newpage
+#### Correlations of individual trip data features
+
+We can examine the correlations between variables to understand the relationship between variables, and also to help be alert to potential problems of multicollinearity.  Here we compute rank correlations (Pearson and Spearman) as well as actual correlations between key variables.   Here we compute the correlations between key variables on the individual CitiBike Trip data.  (Later we will compute correlations on daily aggregated data which has been joined with the daily weather observations.)
+
+```{r compute-correl-by-ride, echo=F, message=F, warning=F}
+#### compute correlations
+#library(Hmisc) #loaded above
+#library(corrplot) # loaded above
+
+res2<-rcorr(as.matrix(CBlite))
+respearson=rcorr(as.matrix(CBlite),type = "pearson")
+resspearman=rcorr(as.matrix(CBlite),type = "spearman")
+res3 <- cor(as.matrix(CBlite))
+```
+
+
+```{r pearson-rank-correl-by-ride, fig.width = 8, fig.height=8, echo=F,message=F,warning=F}
+#### Pearson rank correlation
+  corrplot::corrplot(corr = respearson$r, type = "upper", outline = T, order="original", 
+           p.mat = respearson$P, sig.level = 0.05, insig = "blank", addCoef.col = "black",
+           title = "\nRank Correlation (Pearson) on individual trip data",
+           number.cex = 1.1, number.font = 2, number.digits = 2 )
+```
+
+
+```{r spearman-rank-correl-by-ride, fig.width = 8, fig.height=8, echo=F,message=F,warning=F}
+#### Spearman rank correlation
+  corrplot::corrplot(corr = resspearman$r, type = "upper", outline = T,  order="hclust", 
+           p.mat = resspearman$P, sig.level = 0.05, insig = "blank", addCoef.col = "black",
+           title = "\nRank Correlation (Spearman) on individual trip data",
+           number.cex = 0.9, number.font = 1, number.digits = 2)
+```
+
+```{r act-correlations-by-ride, echo=FALSE, fig.width = 10, fig.height=10}
+#### actual correlations (not rank correlations)
+  corrplot(corr = res3, type = "upper", outline = T,  order="hclust", 
+           sig.level = 0.05, insig = "blank", addCoef.col = "black",
+           title = "\nActual correlations on individual trip data",
+           number.cex = 1.4, number.font = 1, number.digits = 2 )
+```
+
+\newpage
+### Aggregate and join 
+
+#### Aggregate individual CitiBike trip data by day, and join to daily weather data
+
+We will perform our calculations on an aggregated basis. We will group each day's rides together, but we will segment by user_type ("Subscriber" or "Customer") and by gender ("Male or "Female").  For each of these segments, there are some cases where the user_type is not specified, so we have designated that as "Unknown."  For gender, there are cases where the CitiBike data set contains a zero, which indicates that the gender of the user was not recorded.  
+
+For each day, we will aggregate the following items across each of the above groupings:
+
+* mean trip_duration
+* median trip_duration
+* sum of distance_km
+* sum of trip_fee
+* mean of age
+* count of number of trips on that day
+
+We will split the aggregated data into a training dataset, consisting of all (grouped, daily) aggregations from 2013-2018, and a test dataset, consisting of (grouped, daily) aggregations from 2019.
+
+We will then join each aggregated CitiBike data element with the corresponding weather obserservation for that date.
+
+```{r make-train-and-test-datasets, echo=F,message=F,warning=F}
+
+#summary(CB)
+
+##CB$user_type[is.na(CB$user_type)] <- "UNKNOWN"    ## should  not be necessary to do this
+CB$gender <- recode_factor(CB$gender, '1' = "Male", '2' = "Female", '0' = "UNKNOWN")
+
+# make the training data set
+train <- CB %>% 
+              mutate(start_date = as.Date(s_time, format="%Y-%m-%d"),
+#                     user_type = as.character(user_type),
+                     train = 1) %>%
+              filter(start_date < '2019-01-01') %>%
+              group_by(start_date, user_type, train, gender) %>%
+              summarise(
+                mean_duration = mean(trip_duration), 
+                median_duration = median(trip_duration),
+                sum_distance_km = sum(distance_km),
+                sum_trip_fee = sum(trip_fee),
+                avg_age = mean(age),
+                trips = n()
+              ) %>%
+              ungroup()
+
+train_rows = dim(train)[1]
+#summary(train)
+
+# make the test data set
+test <- CB %>% 
+              mutate(start_date = as.Date(s_time, format="%Y-%m-%d"),
+#                     user_type = as.character(user_type),
+                     train = 0) %>%
+              filter(start_date >= '2019-01-01') %>%
+              group_by(start_date, user_type, train, gender) %>%
+              summarise(
+                mean_duration = mean(trip_duration), 
+                median_duration = median(trip_duration),
+                sum_distance_km = sum(distance_km),
+                sum_trip_fee = sum(trip_fee),
+                avg_age = mean(age),
+                trips = n()
+              ) %>%
+              ungroup()
+test_rows = dim(test)[1]
+
+
+# Join train with weather data (there should be no rows with missing values)
+train_weather <- weather %>% inner_join(train, by = c("DATE" = "start_date" ))
+#dim(train_weather)
+
+# Join test with weather data (there should be no rows with missing values)
+test_weather <- weather %>% inner_join(test, by = c("DATE" = "start_date" )) 
+
+#dim(test_weather)
+```
+
+There are `r train_rows` rows of daily aggregated data in the training dataset, and `r test_rows` rows in the corresponding test dataset.
+
+
+# 5. Methodology 
+## 3.1	Descriptive Analytics: 
+### 3.1.1 Analyze data distribution and data skewness
+### 3.1.2 Analyze feature correlations
+### 3.1.3 Analyze Feature Importance
+### 3.1.4 Analyze timeseries decomposition plots
+### 3.1.5 Seasonal and Trend timeseries analysis
+### 3.1.6 Analyze autocorrelation and partial autocorrelation 
+
+## 3.2	Data Correction
+### 3.2.1 Data Imputation
+### 3.2.2 Outlier removal
+
+## 3.3	Feature Engineering
+### 3.3.1 Create important features from date
+### 3.3.2 Create Lagged Feature
+### 3.3.3 Create windowing features
+### 3.3.4 Create important features from weather data
+### 3.3.5 Apply timeseries smoothing functions
+### 3.3.6 Apply various feature transformation techniques (BoxCox, Log etc)
+
+## 3.4	Model Building
+### 3.4.1 Build Multiple Regression model
+### 3.4.2 Build Regularized Regression Model (glmnet)
+### 3.4.3 Build Ensemble model Random Forest
+### 3.4.4 Build Ensemble model gradient boost
+### 3.4.5 Build nonparametric KNN Regressor
+### 3.4.6 Build nonparametric SVM Regressor
+### 3.4.7 Build Timeseries Forecasting model ARIMA
+### 3.4.8 Build Timeseries Forecasting model HoltWinters
+### 3.4.9 Build Timeseries Forecasting model ETS
+### 3.4.10 Build Ensemble of Timeseries Forecasting model
+
+## 3.5	Optimization Functions
+
+# 4. Results
+
+# 4. Conclusion, Summary and Future Work
+
+# 5. References
+
