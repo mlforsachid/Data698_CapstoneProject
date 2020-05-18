@@ -695,9 +695,350 @@ There are `r train_rows` rows of daily aggregated data in the training dataset, 
 ### 3.3.6 Apply various feature transformation techniques (BoxCox, Log etc)
 
 ## 3.4	Model Building
-### 3.4.1 Build Multiple Regression model
+### 3.4.1 Build Multiple Regression model and Random Forest with Train and Test Datasets
+```{r lm-model, echo=F,message=F,warning=F}
+library(tidymodels)  
+library(timeDate)
+library(vip)       
+load(file='RData/CB.RData')
+
+lm_spec <- linear_reg() %>%
+  set_engine(engine = "lm")
+
+lm_spec
+## Linear Regression Model Specification (regression)
+##
+## Computational engine: lm
+lm_fit <- lm_spec %>%
+  fit(trips ~ .,
+    data = train_weather
+  )
+
+lm_fit
+
+rf_spec <- rand_forest(mode = "regression") %>%
+  set_engine("ranger")
+
+rf_spec
+
+library(mice)
+tempData <- mice(train_weather,m=5,maxit=50,meth='pmm',seed=500)
+summary(tempData)
+train_weather <- complete(tempData,1)
+tempData <- mice(test_weather,m=5,maxit=50,meth='pmm',seed=500)
+summary(tempData)
+test_weather <- complete(tempData,1)
+
+rf_fit <- rf_spec %>%
+  fit(trips ~ .,
+    data = data.frame(train_weather)
+  )
+
+rf_fit
+
+results_train <- lm_fit %>%
+  predict(new_data = train_weather) %>%
+  mutate(
+    truth = train_weather$trips,
+    model = "lm"
+  ) %>%
+  bind_rows(rf_fit %>%
+    predict(new_data = train_weather) %>%
+    mutate(
+      truth = train_weather$trips,
+      model = "rf"
+    ))
+
+results_test <- lm_fit %>%
+  predict(new_data = test_weather) %>%
+  mutate(
+    truth = test_weather$trips,
+    model = "lm"
+  ) %>%
+  bind_rows(rf_fit %>%
+    predict(new_data = test_weather) %>%
+    mutate(
+      truth = test_weather$trips,
+      model = "rf"
+    ))
+
+rmse_train <- results_train %>%
+  group_by(model) %>%
+  rmse(truth = truth, estimate = .pred)
+rmse_train
+
+rmse_test <- results_test %>%
+  group_by(model) %>%
+  rmse(truth = truth, estimate = .pred)
+rmse_test
+
+results_test %>%
+  mutate(train = "testing") %>%
+  bind_rows(results_train %>%
+    mutate(train = "training")) %>%
+  ggplot(aes(truth, .pred, color = model)) +
+  geom_abline(lty = 2, color = "gray80", size = 1.5) +
+  geom_point(alpha = 0.5) +
+  facet_wrap(~train) +
+  labs(
+    x = "Truth",
+    y = "Predicted trips",
+    color = "Type of model"
+  )
+
+# cross validation
+set.seed(1234)
+bike_folds <- vfold_cv(train_weather, strata = gender)
+
+rf_res <- fit_resamples(
+  trips ~ .,
+  rf_spec,
+  bike_folds,
+  control = control_resamples(save_pred = TRUE)
+)
+
+rmse_rf <- rf_res %>%
+  collect_metrics()
+rmse_rf
+
+rf_res %>%
+  unnest(.predictions) %>%
+  ggplot(aes(trips, .pred, color = id)) +
+  geom_abline(lty = 2, color = "gray80", size = 1.5) +
+  geom_point(alpha = 0.5) +
+  labs(
+    x = "Truth",
+    y = "Predicted trips",
+    color = NULL
+  )
+```
+
+The rmse of lm is 'r rmse_train$estimate[rmse_train$model=='lm']', and random forest is 'r rmse_train$estimate[rmse_train$model=='rf']'. Random Forest performes much better than lm. We resample the training set to produce an estimate of how the model will perform. The result is much better with rmse 'r rmse_rf$mean[rmse_train$metric=='rmse']'
+
+
 ### 3.4.2 Build Regularized Regression Model (glmnet)
+
+The model uses tidymodels package and takes considerations of holidays into data preparation, also the model runs through grid search on penalty with validation dataset. 
+
+```{r r model-glmnet, echo=F,message=F,warning=F}
+
+# DATA SPLITTING & RESAMPLING
+df <- rbind(train_weather, test_weather) %>%
+  dplyr::select(-train)
+
+set.seed(123)
+splits      <- initial_split(df, strata = gender)
+
+df_other <- training(splits)
+df_test  <- testing(splits)
+
+set.seed(234)
+val_set <- validation_split(df_other, 
+                            strata = gender, 
+                            prop = 0.80)
+val_set
+
+# BUILD THE GLMNET MODEL
+lr_mod <- 
+  linear_reg(penalty = tune(), mixture = 1) %>% 
+  set_engine("glmnet")
+
+# CREATE THE RECIPE
+# holidays <- c("AllSouls", "AshWednesday", "ChristmasEve", "Easter", 
+#               "ChristmasDay", "GoodFriday", "NewYearsDay", "PalmSunday")
+
+holidays <- listHolidays("US")
+
+lr_recipe <- 
+  recipe(trips ~ ., data = df_other) %>% 
+  step_date(DATE) %>% 
+  step_holiday(DATE, holidays = holidays) %>% 
+  step_rm(DATE) %>% 
+  step_dummy(all_nominal(), -all_outcomes()) %>% 
+  step_zv(all_predictors()) %>% 
+  step_knnimpute(all_predictors()) %>% 
+  step_normalize(all_predictors())
+
+# CREATE THE WORKFLOW
+lr_workflow <- 
+  workflow() %>% 
+  add_model(lr_mod) %>% 
+  add_recipe(lr_recipe)
+
+# CREATE THE GRID FOR TUNING
+#lr_reg_grid <- tibble(penalty = 10^seq(-4, -1, length.out = 30))
+lr_reg_grid <- tibble(penalty = 10^seq(-4, -1, length.out = 30))
+
+lr_reg_grid %>% top_n(-5) # lowest penalty values
+#
+lr_reg_grid %>% top_n(5)  # highest penalty values
+
+# TRAIN AND TUNE THE MODEL
+lr_res <- 
+  lr_workflow %>% 
+  tune_grid(val_set,
+            grid = lr_reg_grid,
+            control = control_grid(save_pred = TRUE),
+            metrics = metric_set(rmse))
+
+lr_plot <- 
+  lr_res %>% 
+  collect_metrics() %>% 
+  ggplot(aes(x = penalty, y = mean)) + 
+  geom_point() + 
+  geom_line() + 
+  ylab("RMSE") 
+
+lr_plot 
+
+top_models <-
+  lr_res %>% 
+  show_best("rmse", n = 30) %>% 
+  arrange(penalty) 
+# the lowest rmse is associated with model 23
+data.frame(top_models)
+
+top_glmnet <-
+  lr_res %>% 
+  show_best("rmse", n = 1) 
+top_glmnet
+lr_best <- 
+  lr_res %>% 
+  collect_metrics() %>% 
+  arrange(penalty) %>% 
+  filter(penalty == top_glmnet$penalty) 
+lr_best
+lr_rmse <- 
+  lr_res %>% 
+  collect_predictions(parameters = lr_best) %>% 
+  mutate(model = "glmnet")  
+lr_rmse
+```
+
+The glmnet model runs training model with grid search penalty associated with lowerest rmse, and receives mean of rmse 'r lr_rmse$mean'. 
+
 ### 3.4.3 Build Ensemble model Random Forest
+
+```{r r model-random-forest, echo=F,message=F,warning=F}
+# set up multi-thread processing based on number of cores
+cores <- parallel::detectCores()
+cores
+
+rf_mod <- 
+  rand_forest(mtry = tune(), min_n = tune(), trees = 1000) %>% 
+  set_engine("ranger", num.threads = cores) %>% 
+  set_mode("regression")
+
+# CREATE THE RECIPE AND WORKFLOW
+rf_recipe <- 
+  recipe(trips ~ ., data = df_other) %>% 
+  step_date(DATE) %>% 
+  step_holiday(DATE, holidays = holidays) %>% 
+  step_knnimpute(all_predictors()) %>% 
+  step_rm(DATE) 
+
+rf_workflow <- 
+  workflow() %>% 
+  add_model(rf_mod) %>% 
+  add_recipe(rf_recipe)
+
+# TRAIN AND TUNE THE MODEL
+rf_mod
+# show what will be tuned
+rf_mod %>%    
+  parameters() 
+set.seed(345)
+rf_res <- 
+  rf_workflow %>% 
+  tune_grid(val_set,
+            grid = 25,
+            control = control_grid(save_pred = TRUE),
+            metrics = metric_set(rmse))
+top_rf <- rf_res %>% 
+  show_best(metric = "rmse", n = 1)
+top_rf
+autoplot(rf_res)
+
+rf_best <- 
+  rf_res %>% 
+  select_best(metric = "rmse")
+rf_best
+rf_res %>% 
+  collect_predictions()
+rf_rmse <- 
+  rf_res %>% 
+  collect_predictions(parameters = rf_best) %>% 
+  mutate(model = "random forest")  
+```
+
+### 3.4.3.1 Compare glmnet and random forest models
+
+Random forest model has a better rmse result than glmnet model 'r top_rf$mean' and 'r top_glmnet$mean'.
+
+```{r compare-glmnet-and-random-forest, echo=F,message=F,warning=F}
+bind_rows(rf_rmse, lr_rmse) %>% 
+  ggplot(aes(x = trips, y = .pred, col = model)) + 
+  geom_abline(lty = 2, color = "blue", size = 1.5) +
+  geom_smooth() +
+  geom_point(alpha = 0.5) +
+  xlim(c(0, 60)) +
+  ylim(c(0, 60)) +
+  labs(
+    x = "Trips",
+    y = "Predicted Trips",
+    color = "Type of model"
+  )
+
+rmse_tbl <- data.frame(Model = c('glmnet', 'random forest'),
+                       RMSE = c(top_glmnet$mean, top_rf$mean)
+)
+```
+
+### 3.4.3.2 Build random forest model test 
+
+The random forest model is built with the best grid search results and tested using hold out test dataset. The important variables are listed. 
+
+```{r last-random-forest, echo=F,message=F,warning=F}
+last_rf_mod <- 
+  rand_forest(mtry = 9, min_n = 8, trees = 1000) %>% 
+  set_engine("ranger", num.threads = cores, importance = "impurity") %>% 
+  set_mode("regression")
+
+# the last workflow
+last_rf_workflow <- 
+  rf_workflow %>% 
+  update_model(last_rf_mod)
+
+# the last fit
+set.seed(345)
+last_rf_fit <- 
+  last_rf_workflow %>% 
+  last_fit(splits)
+
+last_rf_fit
+last_rmse <- last_rf_fit %>% 
+  collect_metrics()
+last_rf_fit %>% 
+  pluck(".workflow", 1) %>%   
+  pull_workflow_fit() %>% 
+  vip(num_features = 20)
+last_rf_fit %>% 
+  collect_predictions() %>% 
+  ggplot(aes(x = trips, y = .pred)) + 
+  geom_abline(lty = 2, color = "blue", size = 1.5) +
+  geom_smooth() +
+  geom_point(alpha = 0.5) +
+  xlim(c(0, 60)) +
+  ylim(c(0, 60)) +
+  labs(
+    x = "Trips",
+    y = "Predicted Trips"
+  )
+
+```
+
+The model test result shows that the rmses of training and testing are very close: 'r top_rf$mean' and 'r last_rmse$.estimate[last_rmse$.metric=='rmse']', which shows a good model on prediction. 
+
 ### 3.4.4 Build Ensemble model gradient boost
 ### 3.4.5 Build nonparametric KNN Regressor
 ### 3.4.6 Build nonparametric SVM Regressor
@@ -714,3 +1055,10 @@ There are `r train_rows` rows of daily aggregated data in the training dataset, 
 
 # 5. References
 
+https://www.tidymodels.org/start/case-study/#second-model
+
+https://www.kaggle.com/hansjoerg/glmnet-xgboost-and-svm-using-tidymodels
+
+https://datascienceplus.com/imputing-missing-data-with-r-mice-package/
+
+https://juliasilge.com/blog/intro-tidymodels/
