@@ -1,0 +1,1292 @@
+---
+title: "DATA698-Capstone Project"
+author: "Sachid Vijay Deshmukh, Ann Liu-Ferrara, Ahmed Sajjad"
+date: "2/21/2020"
+output:
+  html_document: 
+    code_folding: show
+    highlight: pygments
+    keep_md: yes
+    md_extensions: +grid_tables
+    theme: cerulean
+    toc: yes
+    toc_depth: 2
+    toc_float: yes
+  pdf_document: default
+---
+
+```{r setup, echo=F, message=F, warning=F}  
+knitr::opts_chunk$set(echo = TRUE, fig.pos = 'h')
+mydir = "./"
+setwd(mydir)
+knitr::opts_knit$set(root.dir = mydir)
+options(digits=7,scipen=999,width=120)
+datadir = paste0(mydir,"/Data/")
+```
+
+
+
+```{r load-libraries, echo=F,message=F,warning=F}
+### Load libraries
+library(tidyverse)
+library(lubridate)
+library(sp)
+library(Hmisc)
+library(corrplot)
+library(forcats)
+library(kableExtra)
+library(ggplot2)
+library(reshape)
+library(dplyr)
+library(forecast)
+library(mice)
+library(readxl)
+library(caret)
+
+library(VIM)
+library(tidyverse)
+
+```
+
+
+\newpage
+
+# 1. Abstract 
+
+Bicycling is an activity which yields many benefits: Riders improve their health through exercise, while traffic congestion is reduced if riders move out of cars, with a corresponding reduction in pollution from carbon emissions [5]. In recent years, Bike Sharing has become popular in a growing list of cities around the world. The NYC “Citibike” bicycle sharing scheme went live (in midtown and downtown Manhattan) in 2013, and has been expanding ever since, both as measured by daily ridership as well as the expanding geographic footprint incorporating a growing number of “docking stations”  [9-10] as the system welcomes riders in Brooklyn, Queens, and northern parts of Manhattan which were not previously served. One problem that many bikeshare systems face is money. An increase in the number of riders who want to use the system necessitates that more bikes be purchased and put into service to accommodate them. Heavy ridership induces wear on the bikes, requiring for more frequent repairs. However, an increase in the number of trips does not necessarily translate to an increase in revenue because riders who are clever can avoid paying surcharges by keeping the length of each trip below a specified limit (either 30 or 45 minutes, depending on user category.) We seek to examine Citibike ridership data [2-3], joined with daily NYC weather data [4], to study the impact of weather on shared bike usage and generate a predictive model which can estimate the number of trips that would be taken on each day [6-8]. The goal is to estimate future demand which would enable the system operator to make expansion plans. Our finding is that ridership exhibits strong seasonality, with correlation to weather-related variables such as daily temperature and precipitation [6-8]. Additionally, ridership is segmented by user type (annual subscribers use the system much more heavily than casual users), gender (there are many more male users than female) and age (a large number of users are clustered in their late 30s). [11-12]
+
+### Keywords 
+
+Bikeshare, Weather, Cycling, CitiBike, New York City
+
+# 2. Introduction 
+
+ Since 2013 a shared bicycle system known as Citibike has been available in New York City [1]. The benefits to having such a system include reducing New Yorkers’ dependence on automobiles and encouraging public health through the exercise attained by cycling [5]. Additionally, users who would otherwise spend money on public transit may find bicycling more economical – so long as they are aware of Citibike’ s pricing constraints. There are currently about 12,000 shared bikes which users can rent from about 750 docking stations located in Manhattan and in western portions of Brooklyn and Queens. A rider can pick up a bike at one station and return it at a different station. The system has been expanding each year, with increases in the number of bicycles available and expansion of the geographic footprint of docking stations. For planning purposes, the system operator needs to project future ridership to make good investments. The available usage data provides a wealth of information which can be mined to seek trends in usage 2-3]. With such intelligence, the company would be better positioned to determine what actions might optimize its revenue stream.
+ 
+* Because of weather, ridership is expected to be lower during the winter months, and on foul-weather days during the rest of the year, compared to a warm and sunny summer day. Using the weather data, we can seek to model the relationship between bicycle ridership and fair/foul or hot/cold weather [6-8]. 
+* What are the differences in rental patterns between annual members (presumably, residents) vs. casual users (presumably, tourists?) [12]
+* Is there any significant relationship between the age and/or gender of the bicycle renter vs. the rental patterns? [12]
+* What is the seasonal component of bikeshare pattern exhibited by consumers (weekday vs weekend) [11]
+
+# 4. Data Collection 
+
+We obtained data from two sources:  
+
+* CitiBike trip dataset
+
+CitiBike makes a vast amount of [data](https://www.citibikenyc.com/system-data) available regarding system usage as well as sales of memberships and short-term passes.  
+
+For [each month](https://s3.amazonaws.com/tripdata/index.html) since the system's inception, there is a file containing details of (almost) every trip.  (Certain "trips" are omitted from the dataset.  For example, if a user checks out a bike from a dock but then returns it within one minute, the system drops such a "trip" from the listing, as such "trips" are not interesting.)
+
+There are currently 77 monthly data files for the New York City bikeshare system, spanning July 2013 through November 2019.  Each file contains a line for every trip.  The number of trips per month varies from as few as 200,000 during winter months in the system's early days to more than 2 million trips this past summer.  The total number of entries was more than 90 million, resulting in 17GB of data.    Because of the computational limitations which this presented, we created samples of 1/1000 and 1/100 of the data.  The samples were created deterministically, by subsetting the files on each 1000th (or, 100th) row.  
+
+* Central Park daily weather data
+
+Also we obtained historical weather information for 2013-2019 from the NCDC (National Climatic Data Center) by submitting an online request to https://www.ncdc.noaa.gov/cdo-web/search .  Although the weather may vary slightly within New York City, we opted to use just the data associated with the Central Park observations as proxy for the entire city's weather.
+
+We believe that the above data provides a reasonable representation of the target population (all CitiBike rides) and the citywide weather.
+
+# 5. Load Data
+
+### Load citibike data
+
+```{r loaddatafile}
+load(file='DATA/CB.RData')
+city_bike_df = as.data.frame(CB)
+head(city_bike_df)
+nrow(city_bike_df)
+ncol(city_bike_df)
+```
+
+
+### Load Weather data
+```{r weather-data, echo=T, message=F, warning=F}
+# Weather data is obtained from the  NCDC (National Climatic Data Center) via https://www.ncdc.noaa.gov/cdo-web/
+# click on search tool  https://www.ncdc.noaa.gov/cdo-web/search
+# select "daily summaries"
+# select Search for Stations
+# Enter Search Term "USW00094728" for Central Park Station: 
+# https://www.ncdc.noaa.gov/cdo-web/datasets/GHCND/stations/GHCND:USW00094728/detail
+# "add to cart"
+
+
+weatherfilenames=list.files(path="./",pattern = '.csv$', full.names = T)    # ending with .csv ; not .zip
+#weatherfilenames
+weatherfile <- "DATA/NYC_Weather_Data_2013-2019.csv"
+
+## Perhaps we should rename the columns to more clearly reflect their meaning?
+weatherspec <- cols(
+  STATION = col_character(),
+  NAME = col_character(),
+  LATITUDE = col_double(),
+  LONGITUDE = col_double(),
+  ELEVATION = col_double(),
+  DATE = col_date(format = "%F"),          #  readr::parse_datetime() :   "%F" = "%Y-%m-%d"
+  #DATE = col_date(format = "%m/%d/%Y"), #col_date(format = "%F")
+  AWND = col_double(),                     # Average Daily Wind Speed
+  AWND_ATTRIBUTES = col_character(),
+  PGTM = col_double(),                    # Peak Wind-Gust Time
+  PGTM_ATTRIBUTES = col_character(),
+  PRCP = col_double(),                    # Amount of Precipitation
+  PRCP_ATTRIBUTES = col_character(),
+  SNOW = col_double(),                    # Amount of Snowfall
+  SNOW_ATTRIBUTES = col_character(),
+  SNWD = col_double(),                    # Depth of snow on the ground
+  SNWD_ATTRIBUTES = col_character(),
+  TAVG = col_double(),                    # Average Temperature (not populated)
+  TAVG_ATTRIBUTES = col_character(),
+  TMAX = col_double(),                    # Maximum temperature for the day
+  TMAX_ATTRIBUTES = col_character(),
+  TMIN = col_double(),                    # Minimum temperature for the day
+  TMIN_ATTRIBUTES = col_character(),
+  TSUN = col_double(),                    # Daily Total Sunshine (not populated)
+  TSUN_ATTRIBUTES = col_character(),
+  WDF2 = col_double(),                    # Direction of fastest 2-minute wind
+  WDF2_ATTRIBUTES = col_character(),
+  WDF5 = col_double(),                    # Direction of fastest 5-second wind
+  WDF5_ATTRIBUTES = col_character(),
+  WSF2 = col_double(),                    # Fastest 2-minute wind speed
+  WSF2_ATTRIBUTES = col_character(),
+  WSF5 = col_double(),                    # fastest 5-second wind speed
+  WSF5_ATTRIBUTES = col_character(),
+  WT01 = col_double(),                    # Fog
+  WT01_ATTRIBUTES = col_character(),
+  WT02 = col_double(),                    # Heavy Fog
+  WT02_ATTRIBUTES = col_character(),
+  WT03 = col_double(),                    # Thunder
+  WT03_ATTRIBUTES = col_character(),
+  WT04 = col_double(),                    # Sleet
+  WT04_ATTRIBUTES = col_character(),
+  WT06 = col_double(),                    # Glaze
+  WT06_ATTRIBUTES = col_character(),
+  WT08 = col_double(),                    # Smoke or haze
+  WT08_ATTRIBUTES = col_character(),
+  WT13 = col_double(),                    # Mist
+  WT13_ATTRIBUTES = col_character(),
+  WT14 = col_double(),                    # Drizzle
+  WT14_ATTRIBUTES = col_character(),
+  WT16 = col_double(),                    # Rain
+  WT16_ATTRIBUTES = col_character(),
+  WT18 = col_double(),                    # Snow      
+  WT18_ATTRIBUTES = col_character(),
+  WT19 = col_double(),                    # Unknown source of precipitation
+  WT19_ATTRIBUTES = col_character(),
+  WT22 = col_double(),                    # Ice fog
+  WT22_ATTRIBUTES = col_character()
+)
+
+# load all the daily weather data
+weather <- read_csv(weatherfile, col_types = weatherspec)
+weather_df1 = as.data.frame(weather)
+
+# Check the number of rows and columns in weather data frame
+nrow(weather_df1)
+ncol(weather_df1)
+
+# Select only those columns that are useful for our analysis
+weather_df = select(weather_df1, STATION, NAME, DATE, AWND, PRCP, SNOW, SNWD, TMAX, TMIN, WDF2, WDF5, WSF2, WSF5, WT01)
+
+# Check how many columns have empty values
+sapply(weather_df, function(x) sum(is.na(x)))
+
+# Perform Data Impuation on weather_df, replace empty/blank values with mean values
+weather_df$AWND[is.na(weather_df$AWND)] = mean(weather_df1$AWND, na.rm=TRUE)
+weather_df$SNOW[is.na(weather_df$SNOW)] = mean(weather_df1$SNOW, na.rm=TRUE)
+weather_df$WDF2[is.na(weather_df$WDF2)] = mean(weather_df1$WDF2, na.rm=TRUE)
+weather_df$WDF5[is.na(weather_df$WDF5)] = mean(weather_df1$WDF5, na.rm=TRUE)
+weather_df$WSF2[is.na(weather_df$WSF2)] = mean(weather_df1$WSF2, na.rm=TRUE)
+weather_df$WSF5[is.na(weather_df$WSF5)] = mean(weather_df1$WSF5, na.rm=TRUE)
+
+# Again, check if the imputation removed all empty/blank values with mean values
+sapply(weather_df, function(x) sum(is.na(x)))
+
+# City bike data number of rows and columns
+c(nrow(city_bike_df), ncol(city_bike_df))
+
+# Weather data number of rows and columns
+c(nrow(weather_df), ncol(weather_df))
+
+# Check the column names of city_bike_df and weather_df
+colnames(city_bike_df)
+colnames(weather_df)
+
+# Display head of city_bike_df and weather_df
+head(city_bike_df)
+head(weather_df)
+```
+
+\newpage
+
+# 6. Exploratory Data Analysis
+
+#### Examine Trip Duration variable
+
+```{r trip-duration, echo=F, warning=F, message=F}
+#### Histogram of trip_duration, log(trip_duration)
+par(mfrow=c(2,1))
+hist(city_bike_df$trip_duration, col='lightgreen', breaks=100,  main = "Histogram of trip_duration before adjustments", xlab="trip_duration (in seconds)")
+hist(log(city_bike_df$trip_duration), col='lightblue', breaks=100, main = "Histogram of log(trip_duration) before adjustments", xlab="log(trip_duration) (in seconds)")
+```
+
+```{r trip-duration-units-before-truncation, echo=F,message=F,warning=F}
+#### Summary of trip durations before censoring/truncation:
+#express trip duration in seconds, minutes, hours, days
+# note: we needed to fix the November daylight savings problem to eliminate negative trip times
+
+#### Supplied seconds
+supplied_secs<-summary(CB$trip_duration)
+
+#### Seconds
+CB$trip_duration_s = as.numeric(CB$e_time - CB$s_time,"secs")
+calc_secs<-summary(CB$trip_duration_s)
+
+#### Minutes
+CB$trip_duration_m = as.numeric(CB$e_time - CB$s_time,"mins")
+calc_mins<-summary(CB$trip_duration_m)
+
+#### Hours
+CB$trip_duration_h = as.numeric(CB$e_time - CB$s_time,"hours")
+calc_hours<-summary(CB$trip_duration_h)
+
+#### Days
+CB$trip_duration_d = as.numeric(CB$e_time - CB$s_time,"days")
+calc_days <-summary(CB$trip_duration_d)
+
+# library(kableExtra) # loaded above
+rbind(supplied_secs, calc_secs, calc_mins, calc_hours, calc_days) %>% 
+  kable(caption = "Summary of Trip durations before truncation") %>%
+  kable_styling(c("bordered","striped"),latex_options =  "hold_position")
+```
+
+The above indicates that the duration of the trips (in seconds) includes values in the millions -- which likely reflects a trip which failed to be properly closed out.
+
+
+\newpage
+
+Delete cases with unreasonable trip_duration values Let's assume that nobody would rent a bicycle for more than a specified timelimit (say, 3 hours), and drop any records which exceed this:
+
+```{r drop-long-trips, echo=F,warning=F, message=F}
+total_rows=dim(CB)[1]
+#print(paste("Initial number of trips: ", total_rows))
+
+# choose only trips that were at most 3 hrs, as longer trips may reflect an error
+# remove long trips from the data set -- something may be wrong (e.g., the system failed to properly record the return of a bike)
+longtripthreshold_s = 60 * 60 *3  # 10800 seconds = 180 minutes = 3 hours
+longtripthreshold_m = longtripthreshold_s / 60
+longtripthreshold_h = longtripthreshold_m / 60
+
+long_trips <- CB %>% filter(trip_duration_s > longtripthreshold_s)
+num_long_trips_removed = dim(long_trips)[1]
+pct_long_trips_removed = round(100*num_long_trips_removed / total_rows, 3)
+
+CB <- CB %>% filter(trip_duration <= longtripthreshold_s)
+reduced_rows = dim(CB)[1]
+
+print(paste0("Removed ", num_long_trips_removed, " trips (", pct_long_trips_removed, "%) of longer than ", longtripthreshold_h, " hours."))
+print(paste0("Remaining number of trips: ", reduced_rows))
+
+par(mfrow=c(2,1))
+hist(CB$trip_duration,col='lightgreen', breaks=100, main = "Histogram of trip_duration AFTER adjustments", xlab="trip_duration (in seconds)")
+
+hist(log(CB$trip_duration),col='lightblue', breaks=100, main = "Histogram of log(trip_duration) before adjustments", xlab="log(trip_duration, in seconds)")
+```
+
+
+\newpage
+
+#### Examine birth_year variable
+
+Other inconsistencies concern the collection of birth_year, from which we can infer the age of the participant.  There are some months in which this value is omitted, while there are other months in which all values are populated.  However, there are a few records which suggest that the rider is a centenarian -- it seems highly implausible that someone born in the 1880s is cycling around Central Park -- but the data does have such anomalies.  Thus, a substantial amount of time was needed for detecting and cleaning such inconsistencies.
+
+The birth year for some users is as old as 
+
+```{r}
+summary(CB$birth_year)["Min."]
+```
+
+which is not possible:
+
+```{r birth-year, echo=F,message=F,warn=F}
+summary(CB$birth_year)
+hist(CB$birth_year, col="lightgreen", main="Histogram of birth_year")
+# Deduce age from trip date and birth year
+#library(lubridate) #loaded above
+CB$age <- year(CB$s_time) - CB$birth_year
+
+par(mfrow=c(1,2))
+hist(CB$age, col="lightblue", main="Histogram of inferred Age", xlab="User Age, inferred from birth year")
+hist(log(CB$age), col="lightblue",  main="Histogram of log(inferred Age)", xlab="log(User Age, inferred from birth year)")
+```
+
+\newpage
+
+Remove trips associated with very old users (age>90)
+(Also: remove trips associated with missing birth_year)  
+
+```{r age-and-birth-year, echo=F,message=F,warning=F}
+
+# choose only trips where the user was born after a certain year,  as older users may reflect an error
+age_threshhold = 90
+aged_trips <- CB %>% filter(age > age_threshhold)
+num_aged_trips_removed = dim(aged_trips)[1]
+pct_aged_trips_removed = round(100*num_aged_trips_removed / total_rows, 3)
+
+unknown_age_trips <- CB %>% filter(is.na(age))
+num_unknown_age_trips_removed = dim(unknown_age_trips)[1]
+pct_unknown_age_trips_removed = round(100*num_unknown_age_trips_removed / total_rows, 3)
+
+print(paste0("Removed ", num_aged_trips_removed, " trips (", pct_aged_trips_removed, "%) of users older than ", age_threshhold, " years."))
+print(paste0("Removed ", num_unknown_age_trips_removed, " trips (", pct_unknown_age_trips_removed, "%) of users where age is unknown (birth_year unspecified)."))
+
+CB <- CB %>% filter(age <= age_threshhold)
+reduced_rows = dim(CB)[1]
+print(paste0("Remaining number of trips: ", reduced_rows))
+
+par(mfrow=c(1,2))
+hist(CB$age, col="lightgreen", main="Age, after deletions", xlab="User Age, inferred from birth year")
+hist(log(CB$age), col="lightgreen",  main="log(Age), after deletions", xlab="log(User Age, inferred from birth year)")
+```
+
+
+\newpage
+
+#### Compute distance between start and end stations 
+
+This is straight-line distance between (longitude,latitude) points -- it doesn't incorporate an actual bicycle route.   
+
+There are services (e.g., from Google) which can compute and measure a recommended bicycle route between points, but use of such services requires a subscription and incurs a cost.
+
+```{r get-distance, echo=F,message=F,warning=F}
+# Compute the distance between start and end stations
+s_lat_long <- CB %>% select(c(s_lat,s_long)) %>%  as.matrix
+e_lat_long <- CB %>% select(c(e_lat,e_long)) %>%  as.matrix
+#library(sp) # loaded above
+CB$distance_km <- spDists(s_lat_long, e_lat_long, longlat=T, diagonal = TRUE)
+summary(CB$distance_km)
+maxdistance = summary(CB$distance_km)["Max."]
+hist(CB$distance_km, breaks=30, col="orange", 
+     main="histogram of estimated travel distance (in km)")
+```
+
+In this subset of the data, the maximum distance between stations is 
+
+```{r} 
+maxdistance
+```
+km.  In the data there are some stations for which the latitude and longitude are zero, which suggests that the distance between such a station and an actual station is many thousands of miles.  If such items exist, we will delete them:
+
+#### Delete unusually long distances
+
+```{r delete-long-distances,  echo=F,message=F,warning=F}
+### long distances?
+long_distances <- CB %>% filter(distance_km>50)
+
+if (dim(long_distances)[1]>0) {
+print(paste("Dropping ", dim(long_distances)[1], " trips because of unreasonably long distance travelled"))
+    print(t(long_distances))
+  
+### These items have a station where latitude and longitude are zero.
+### Drop them:
+
+  CB <- CB %>% filter(distance_km<50)
+
+  summary(CB$distance_km)
+  hist(CB$distance_km, breaks=30, col="lightgreen", main="Histogram of distance_km after dropping problem trips")
+} else {print("No unusually long distances were found in this subset of the data.")}
+```
+
+\newpage
+
+#### Compute usage fee
+
+There is a time-based usage fee for rides longer than an initial period:
+
+* For **user_type=Subscriber**, the fee is **$2.50 per 15 minutes** following an initial free 45 minutes per ride.
+* For **user_type=Customer**, the fee is **$4.00 per 15 minutes** following an initial free 30 minutes per ride.
+* There are some cases where the user type is not specified (we have relabeled as "UNKNOWN", and we do note estimate usage fees for such trips.)
+
+
+
+```{r get_trip-fee, echo=F,warning=F,message=F}
+
+CB$trip_fee <- 0
+CB$trip_fee[CB$user_type=="Subscriber"] <- 2.50 * (ceiling(CB$trip_duration_m[CB$user_type=="Subscriber"]  / 15)-3)  # first 45 minutes are free
+CB$trip_fee[CB$user_type=="Customer"]   <- 4.00 * (ceiling(CB$trip_duration_m[CB$user_type=="Customer"]  / 15)-2)  # first 30 minutes are free
+CB$trip_fee[CB$user_type=="UNKNOWN"] <- 0   # we don't know the fee structure for "UNKNOWN", so assume zero
+CB$trip_fee[CB$trip_fee<0] <- 0   # fee is non-negative
+
+par(mfrow=c(1,2))
+hist(CB$trip_fee,breaks=40,col="yellow", main="Histogram of trip_fee (most trips incur no fee)")
+hist(CB$trip_fee[CB$trip_fee>0],breaks=32,col="lightgreen", main = "Histogram of trip_fee excluding zeros (leftmost bar = $2.50)")
+
+```
+
+```{r chunk22-trip-duration-units-after-censor-truncate, eval=T}
+#### Summary of trip durations AFTER censoring/truncation:
+
+#express trip duration in seconds, minutes, hours, days
+# note: we needed to fix the November daylight savings problem to eliminate negative trip times
+
+#### Supplied seconds
+#print("Supplied Seconds:")
+supplied_secs<-summary(CB$trip_duration)
+
+#### Seconds
+CB$trip_duration_s = as.numeric(CB$e_time - CB$s_time,"secs")
+calc_secs<-summary(CB$trip_duration_s)
+
+#### Minutes
+CB$trip_duration_m = as.numeric(CB$e_time - CB$s_time,"mins")
+calc_mins<-summary(CB$trip_duration_m)
+
+#### Hours
+CB$trip_duration_h = as.numeric(CB$e_time - CB$s_time,"hours")
+calc_hours<-summary(CB$trip_duration_h)
+
+#### Days
+CB$trip_duration_d = as.numeric(CB$e_time - CB$s_time,"days")
+calc_days <-summary(CB$trip_duration_d)
+
+# library(kableExtra) # loaded above
+rbind(supplied_secs, calc_secs, calc_mins, calc_hours, calc_days) %>% 
+  kable(caption = "Summary of trip durations - AFTER truncations:") %>%
+  kable_styling(c("bordered","striped"),latex_options =  "hold_position")
+
+```
+
+We could have chosen to ***censor*** the data, in which case we would not drop observations, but would instead move them to a limiting value, such as three hours (for trip time) or an age of 90 years (for adjusting birth_year).  
+
+As there were few such cases, we instead decided to ***truncate*** the data by dropping such observations from the dataset.
+
+#### Limitations and Challenges in uploading and analyzing this data
+
+#### Data Size
+
+Because there is so much data, it is difficult to analyze the entire universe of trip-by-trip data unless one has high-performance computational resources.
+
+#### Data formatting inconsistencies from month to month:
+
+* Data column names change slightly from month to month.
+* In some months, CitiBike specifies dates as YYYY-MM-DD, while in other months, dates are MM/DD/YYYY .  
+* In certain months, the timestamps include HH:MM:SS (as well as fractional seconds) while in other months, timestamps only include HH:MM , as seconds are omitted entirely.  
+* We encountered an unusual quirk which manifests itself just once a year, on the first Sunday of November, when clocks are rolled back an hour as Daylight Savings time changes to Standard time:  
+  + The files do not specify whether a timestamp is EDT or EST.  On any other date, this is not a problem, but the hour of 1am-2am EDT on that November Sunday is followed by an hour 1am-2am EST.
+  + If someone rents a bike at, say, 1:55am EDT (before the time change) and then returns it 15 minutes later, the time is now 1:10am (EST).  
+  + The difference in time timestamps suggests that the rental was negative 45 minutes, which is of course impossible!
+* Sometimes there is an unusually long interval between the start time of a bicycle rental and the time at which the system registers such rental as having concluded.
+
+
+```{r CBlite, echo=F, message=F, warning=F}
+#### Make a smaller dataset, numeric, without multicollinearities, for correlation calculations
+# extract selected fields
+CBlite  <- select(CB, c(trip_duration, trip_fee, distance_km, 
+                        s_station_id, s_lat, s_long,
+                        e_station_id, e_lat, e_long,
+                        user_type, gender, age))
+
+#make numeric variables
+CBlite$user_type <- as.integer(CBlite$user_type)
+CBlite$gender <- as.integer(CBlite$gender)
+
+# function to revert factor back to its numeric levels
+as.numeric.factor <- function(x) {as.numeric(levels(x))[x]}
+
+CBlite$s_station_id <- as.numeric.factor(CBlite$s_station_id)
+CBlite$e_station_id <- as.numeric.factor(CBlite$e_station_id)
+```
+
+\newpage
+
+#### Correlations of individual trip data features
+
+We can examine the correlations between variables to understand the relationship between variables, and also to help be alert to potential problems of multicollinearity.  Here we compute rank correlations (Pearson and Spearman) as well as actual correlations between key variables.   Here we compute the correlations between key variables on the individual CitiBike Trip data.  (Later we will compute correlations on daily aggregated data which has been joined with the daily weather observations.)
+
+```{r compute-correl-by-ride, echo=F, message=F, warning=F}
+#### compute correlations
+#library(Hmisc) #loaded above
+#library(corrplot) # loaded above
+
+res2<-rcorr(as.matrix(CBlite))
+respearson=rcorr(as.matrix(CBlite),type = "pearson")
+resspearman=rcorr(as.matrix(CBlite),type = "spearman")
+res3 <- cor(as.matrix(CBlite))
+```
+
+
+```{r pearson-rank-correl-by-ride, fig.width = 8, fig.height=8, echo=F,message=F,warning=F}
+#### Pearson rank correlation
+  corrplot::corrplot(corr = respearson$r, type = "upper", outline = T, order="original", 
+           p.mat = respearson$P, sig.level = 0.05, insig = "blank", addCoef.col = "black",
+           title = "\nRank Correlation (Pearson) on individual trip data",
+           number.cex = 1.1, number.font = 2, number.digits = 2 )
+```
+
+
+```{r spearman-rank-correl-by-ride, fig.width = 8, fig.height=8, echo=F,message=F,warning=F}
+#### Spearman rank correlation
+  corrplot::corrplot(corr = resspearman$r, type = "upper", outline = T,  order="hclust", 
+           p.mat = resspearman$P, sig.level = 0.05, insig = "blank", addCoef.col = "black",
+           title = "\nRank Correlation (Spearman) on individual trip data",
+           number.cex = 0.9, number.font = 1, number.digits = 2)
+```
+
+```{r act-correlations-by-ride, echo=FALSE, fig.width = 10, fig.height=10}
+#### actual correlations (not rank correlations)
+  corrplot(corr = res3, type = "upper", outline = T,  order="hclust", 
+           sig.level = 0.05, insig = "blank", addCoef.col = "black",
+           title = "\nActual correlations on individual trip data",
+           number.cex = 1.4, number.font = 1, number.digits = 2 )
+```
+
+\newpage
+### Aggregate and join 
+
+Aggregate individual CitiBike trip data by day, and join to daily weather data
+
+We will perform our calculations on an aggregated basis. We will group each day's rides together, but we will segment by user_type ("Subscriber" or "Customer") and by gender ("Male or "Female").  For each of these segments, there are some cases where the user_type is not specified, so we have designated that as "Unknown."  For gender, there are cases where the CitiBike data set contains a zero, which indicates that the gender of the user was not recorded.  
+
+For each day, we will aggregate the following items across each of the above groupings:
+
+* mean trip_duration
+* median trip_duration
+* sum of distance_km
+* sum of trip_fee
+* mean of age
+* count of number of trips on that day
+
+We will split the aggregated data into a training dataset, consisting of all (grouped, daily) aggregations from 2013-2018, and a test dataset, consisting of (grouped, daily) aggregations from 2019.
+
+We will then join each aggregated CitiBike data element with the corresponding weather obserservation for that date.
+
+```{r make-train-and-test-datasets, echo=TRUE,message=TRUE,warning=F}
+
+#summary(CB)
+
+##CB$user_type[is.na(CB$user_type)] <- "UNKNOWN"    ## should  not be necessary to do this
+CB$gender <- recode_factor(CB$gender, '1' = "Male", '2' = "Female", '0' = "UNKNOWN")
+
+# make the training data set
+train <- CB %>% 
+              mutate(start_date = as.Date(s_time, format="%Y-%m-%d"),
+#                     user_type = as.character(user_type),
+                     train = 1) %>%
+              filter(start_date < '2019-01-01') %>%
+              group_by(start_date, user_type, train, gender) %>%
+              summarise(
+                mean_duration = mean(trip_duration), 
+                median_duration = median(trip_duration),
+                sum_distance_km = sum(distance_km),
+                sum_trip_fee = sum(trip_fee),
+                avg_age = mean(age),
+                trips = n()
+              ) %>%
+              ungroup()
+
+train_rows = dim(train)[1]
+#summary(train)
+
+# make the test data set
+test <- CB %>% 
+              mutate(start_date = as.Date(s_time, format="%Y-%m-%d"),
+#                     user_type = as.character(user_type),
+                     train = 0) %>%
+              filter(start_date >= '2019-01-01') %>%
+              group_by(start_date, user_type, train, gender) %>%
+              summarise(
+                mean_duration = mean(trip_duration), 
+                median_duration = median(trip_duration),
+                sum_distance_km = sum(distance_km),
+                sum_trip_fee = sum(trip_fee),
+                avg_age = mean(age),
+                trips = n()
+              ) %>%
+              ungroup()
+test_rows = dim(test)[1]
+
+
+# Join train with weather data (there should be no rows with missing values)
+train_weather <- weather %>% inner_join(train, by = c("DATE" = "start_date" ))
+#dim(train_weather)
+
+# Join test with weather data (there should be no rows with missing values)
+test_weather <- weather %>% inner_join(test, by = c("DATE" = "start_date" )) 
+
+df.join = rbind(train_weather, test_weather)
+tmp.df <- mice(
+  df.join,
+  m = 2,
+  maxit = 10,
+  meth = 'pmm',
+  seed = 500,
+  print = FALSE
+)
+df.join <- complete(tmp.df)
+naCols <- names(which(sapply(df.join, anyNA)))
+df.join = df.join[, (!names(df.join) %in% naCols)]
+df.join.agg = df.join %>% dplyr::group_by(DATE, user_type, train, gender) %>% summarise(AWND = max(AWND), PRCP = max(PRCP), SNOW = max(SNOW), SNWD = max(SNWD), TMAX = max(TMAX), TMIN = max(TMIN), WDF2 = max(WDF2), WDF5 = max(WDF5), WSF2 = max(WSF2), WSF5 = max(WSF5), mean_duration = max(mean_duration), median_duration = max(median_duration), sum_distance_km = sum(sum_distance_km), sum_trip_fee = sum(sum_trip_fee), avg_age = max(avg_age), trips = sum(trips))
+df.join.agg$user_type = as.character(df.join.agg$user_type)
+df.join.agg$user_type[df.join.agg$user_type == "Subscriber"] = 2
+df.join.agg$user_type[df.join.agg$user_type == "Customer"] = 1
+df.join.agg$user_type[df.join.agg$user_type == "UNKNOWN"] = 0
+df.join.agg$user_type = as.integer(df.join.agg$user_type)
+
+df.join.agg$gender = as.character(df.join.agg$gender)
+df.join.agg$gender[df.join.agg$gender == "UNKNOWN"] = 0
+df.join.agg$gender[df.join.agg$gender == "Female"] = 1
+df.join.agg$gender[df.join.agg$gender == "Male"] = 2
+df.join.agg$gender = as.integer(df.join.agg$gender)
+
+train = df.join.agg[df.join.agg$train ==1,]
+test = df.join.agg[df.join.agg$train !=1,]
+
+```
+
+#### Number of records in train dataset 
+```{r} 
+nrow(train) 
+``` 
+#### Number ot rows in test dataset
+```{r} 
+nrow(test)
+``` 
+
+# 7. Model Building
+
+## TS Models
+
+#### Convert training dataset into timeseries object
+
+```{r}
+train.agg = train %>% dplyr::group_by(DATE) %>% summarise(trips = sum(trips))
+train.ts = ts(train.agg$trips, start = c(2013,181), end = c(2018,365), frequency = 365)
+test.agg = test %>% group_by(DATE) %>% summarise(trips = sum(trips))
+test.ts = ts(test.agg$trips, start = c(2019,1), end = c(2019,365), frequency = 365)
+train.ts = tsclean(train.ts)
+test.ts = tsclean(test.ts)
+```
+
+#### Let's plot the time series
+
+```{r}
+autoplot(train.ts) +
+  xlab('Day') +
+  ylab('Trips') +
+  ggtitle('CitiBike Daily trips')
+```
+
+#### From the timeseries plot we can clearly see annual seasonality. Bikeshare activity peaks in Summer and slows down in winter. Time seried also reveals increasing trend, where ridership count it increasing over the period of time 
+
+#### Let's use STL decomposition to confirm our findings
+
+```{r}
+res = stl(train.ts, s.window = 30)
+plot(res)
+```
+
+#### We can see that STL plot above shows strong seasonal pattern. There is positive trend which indicates growth in the citibike bikeshare ridership over the period if time
+
+#### Above is also a non-stationary time series. Let's see what order differencing is required to make it stationary
+
+```{r}
+print(paste('Order of seasonal difference required = ', nsdiffs(train.ts)))
+print(paste('Order of difference required = ', ndiffs(train.ts)))
+```
+#### We can see that we need 0 order seasonal difference followed by first order regular difference to make this time series stationary
+
+#### Let's try following forecating models on this time series and assess which one is better in terms of RMSE. We will use time series cross validation function to calculate RMSE for eash model
+
+* Seasonal Naive Model
+* Random walk model
+* ETS model
+* ARIMA model
+
+```{r}
+df.perf <<- NULL
+calcRMSE = function(modelName, fcst, actuals, modelType)
+{
+  RMSE =  sqrt(sum((fcst - actuals) ^2)/length(fcst))
+  print(paste('RMSE for model', modelName, '=', RMSE))
+  df.perf <<- rbind(df.perf, data.frame(ModelName = modelName, RMSE = RMSE, ModelType = modelType))
+  
+}
+```
+
+#### Fit seasonal naive model and calc RMSE
+
+```{r}
+snaive.model = snaive(train.ts, h=365)
+fcst = forecast(snaive.model, h = 365)
+df.fcst.snaive = data.frame(fcst)
+df.fcst.snaive = df.fcst.snaive %>% dplyr::rename('fcst' = 'Point.Forecast')
+calcRMSE('snaive', df.fcst.snaive$fcst, test.ts, 'Time Series')
+```
+
+#### Fit stl forecast method
+
+```{r}
+stl.model = stlf(train.ts, h=365)
+fcst = forecast(stl.model, h = 365)
+df.fcst.stl = data.frame(fcst)
+df.fcst.stl = df.fcst.stl %>% dplyr::rename('fcst' = 'Point.Forecast')
+calcRMSE('stl', df.fcst.stl$fcst, test.ts, 'Time Series')
+```
+
+#### Fit Random Walk model and calc RMSE
+
+```{r}
+rwf.model =rwf(train.ts , h=365, drift = TRUE, lambda = BoxCox.lambda(train.ts))
+fcst = forecast(rwf.model, h = 365, lambda =BoxCox.lambda(train.ts) )
+df.fcst.rwf = data.frame(fcst)
+df.fcst.rwf = df.fcst.rwf %>% dplyr::rename('fcst' = 'Point.Forecast')
+calcRMSE('rwf', df.fcst.rwf$fcst, test.ts, 'Time Series')
+```
+
+#### Fit Seasonal ARIMA model and calc RMSE
+
+```{r}
+
+func <- auto.arima(train.ts, seasonal = TRUE)
+fcst = forecast(func, h = 365)
+df.fcst.arima = data.frame(fcst)
+df.fcst.arima = df.fcst.arima %>% dplyr::rename('fcst' = 'Point.Forecast')
+calcRMSE('auto arima', df.fcst.arima$fcst, test.ts, 'Time Series')
+```
+
+
+#### Fit ETS model and calc RMSE
+
+```{r}
+func =  ets(test.ts, model="ZZZ")
+fcst = forecast(func, h = 365)
+df.fcst.ets = data.frame(fcst)
+df.fcst.ets = df.fcst.ets %>% dplyr::rename('fcst' = 'Point.Forecast')
+calcRMSE('ETS', df.fcst.ets$fcst, test.ts, 'Time Series')
+```
+
+#### Fit theta model and calc RMSE
+
+```{r}
+func =  thetaf(train.ts, h= 365)
+fcst = forecast(func, h = 365)
+df.fcst.theta = data.frame(fcst)
+df.fcst.theta = df.fcst.theta %>% dplyr::rename('fcst' = 'Point.Forecast')
+
+calcRMSE('Theta', df.fcst.theta$fcst, test.ts, 'Time Series')
+```
+
+
+#### We can see that theta model gives us best RMSE. Let's analyze model details
+
+```{r warning=FALSE, message=FALSE}
+fit = thetaf(train.ts, h=365)
+```
+
+#### Let's analyze residuals
+
+```{r}
+checkresiduals(fit)
+```
+
+#### Residual plots are not satisfactory. Small value of Ljung-Box test shows that residuals are correlated. ACF plot also confirms the same. Histogram suggests that residuals are not normally distributed. Timeseries models alone are not very relevent for Citibike ridership count prediction
+
+#### Let's try model ensemble
+```{r}
+
+df.cons = data.frame( cbind(df.fcst.theta$Hi.80, df.fcst.snaive$Hi.80, df.fcst.stl$Hi.80))
+names(df.cons) = c("fcst1", "fcst2", "fcst3")
+df.cons$fcst = (df.cons$fcst1 + df.cons$fcst2 + df.cons$fcst3) /3
+
+calcRMSE('TS Ensemble', df.cons$fcst, test.ts, 'Time Series')
+```
+
+#### Time Series Model Performance
+
+```{r}
+knitr::kable(df.perf %>% filter(ModelType == 'Time Series') %>% arrange (RMSE)) 
+  
+```
+#### Even with timeseries ensemble model RMSE is not vastly improved. This indicates that timeseries models alone are not a good choice for forecasting Citibike ridership
+
+#### Let's plot the forecast
+
+```{r}
+autoplot(train.ts) +
+  autolayer(test.ts, series = 'Test Data') +
+  autolayer(ts(df.cons$fcst, start = c(2019,1), end = c(2019,365), frequency = 365), series = 'Forecast') +
+  ggtitle("Forecast - Citibike ridership") +
+  ylab("Ride Count")
+
+```
+
+## Linear Regression Models
+
+#### Create training and test split on the data
+
+```{r train-test-split}
+colY = which(colnames(train) == "trips")
+
+trainX <- train[,-colY]
+trainY <- train[, colY]
+testX <- test[,-colY]
+testY <- test[, colY]
+
+ctrl <- trainControl(method = "cv")
+```
+
+#### Fit Linear Model
+
+```{r big-linear-model-train, message=FALSE, warning=FALSE}
+lm.model <- train(trips ~ ., data = train,
+                  method = "lm",
+                 preProcess = c( "center", "scale"),
+                 trControl = ctrl)
+lm.pred <- predict(lm.model, newdata = testX)
+df.pred = data.frame(pred = lm.pred, Date = test$DATE)
+df.pred = df.pred %>% group_by(Date) %>%summarise(pred = sum(pred))
+
+calcRMSE('lm', df.pred$pred, test.ts, 'Linear Model')
+
+autoplot(train.ts) +
+  autolayer(test.ts, series = 'Test Data') +
+  autolayer(ts(df.pred$pred, start = c(2019,1), end = c(2019,365), frequency = 365), series = 'Forecast') +
+  ggtitle("Forecast - Citibike ridership") +
+  ylab("Ride Count")
+```
+
+
+#### Fit Partial Least Square model (PLS) 
+
+```{r pls-tune}
+plsTune <- train(trips ~ .,
+                 data = train,
+                 method = "pls",
+                 tuneGrid = expand.grid(ncomp = 1:19),
+                 trControl = ctrl)
+pls.pred <- predict(plsTune, newdata = testX)
+df.pred = data.frame(pred = pls.pred, Date = test$DATE)
+df.pred = df.pred %>% group_by(Date) %>%summarise(pred = sum(pred))
+
+calcRMSE('pls', df.pred$pred, test.ts, 'Linear Model')
+```
+
+### Fit PCR (Principal Components Regression) model
+```{r pcr-tune}
+
+pcrTune <- train(trips ~ .,
+                 data = train,
+                 method = "pcr",
+                 tuneGrid = expand.grid(ncomp = 1:19),
+                 trControl = ctrl)
+pcr.pred <- predict(pcrTune, newdata = testX)
+df.pred = data.frame(pred = pcr.pred, Date = test$DATE)
+df.pred = df.pred %>% group_by(Date) %>%summarise(pred = sum(pred))
+
+calcRMSE('pcr', df.pred$pred, test.ts, 'Linear Model') 
+```
+
+### Importance of variables in PLS
+```{r pls-importance, fig.height=10, fig.width=8, warning = FALSE, message=FALSE}
+plsImp <- varImp(plsTune, scale = FALSE)
+plot(plsImp, top = 35, scales = list(y = list(cex = .95)))
+```
+
+
+#### Fit Penalized Models
+
+### Ridge Regression
+
+```{r ridgeGrid-setup}
+ridgeGrid <- expand.grid(lambda = seq(0, .025, length = 11))
+train.m = train[, -nearZeroVar(train)]
+ridgeTune <- train(trips ~ .,
+                   data = train.m,
+                   method = "ridge",
+                   #tuneGrid = ridgeGrid,
+                   trControl = ctrl,
+                   preProc = c("BoxCox", "center", "scale")
+                   )
+ridge.pred <- predict(ridgeTune, newdata = testX)
+df.pred = data.frame(pred = ridge.pred, Date = test$DATE)
+df.pred = df.pred %>% group_by(Date) %>%summarise(pred = sum(pred))
+
+calcRMSE('ridge', df.pred$pred, test.ts, 'Linear Model') 
+```
+
+
+```{r plot-ridge-tune}
+update(plot(ridgeTune), xlab = "Penalty",main="Ridge results vs. lambda penalty")
+```
+
+### Elasticnet
+
+```{r elasticnet}
+enetGrid <- expand.grid(lambda = c(seq(0,1,length=6)),
+                        fraction = seq(.05, 1, length = 20))
+
+enetTune <- train(trips ~ .,
+                  data = train.m,
+                  method = "enet",
+                  tuneGrid = enetGrid,
+                  trControl = ctrl,
+                  preProc = c("BoxCox", "center", "scale")
+                  )
+enet.pred <- predict(enetTune, newdata = testX)
+df.pred = data.frame(pred = enet.pred, Date = test$DATE)
+df.pred = df.pred %>% group_by(Date) %>%summarise(pred = sum(pred))
+
+calcRMSE('elastic net', df.pred$pred, test.ts, 'Linear Model') 
+```
+
+#### Elasticnet Plot
+
+```{r enetplot}
+plot(enetTune, main="ElasticNet", sub="Minimum RMSE occurs at lambda=0 and fraction=0.85")
+```
+
+#### Linear Model Performance
+
+```{r}
+knitr::kable(df.perf %>% filter(ModelType == 'Linear Model') %>% arrange (RMSE)) 
+
+```
+
+#### We can see that elastic net provides the best performance amongst linear models
+
+#### Analyze residuals
+
+```{r}
+checkresiduals(enetTune )
+```
+
+#### Residuals from Elastic Net linear model looks much better than timeseries models. Residuals appeared to be normally distributed and ACF plot shows little correlation amongst residuals which is not very significant.
+
+#### Plot Forecast with Elastic Net model
+```{r}
+df.pred = data.frame(pred = enet.pred, Date = test$DATE)
+df.pred = df.pred %>% group_by(Date) %>%summarise(pred = sum(pred))
+autoplot(train.ts) +
+  autolayer(test.ts, series = 'Test Data') +
+  autolayer(ts(df.pred$pred, start = c(2019,1), end = c(2019,365), frequency = 365), series = 'Forecast') +
+  ggtitle("Forecast - Citibike ridership") +
+  ylab("Ride Count")
+```
+#### Forecast with elastic net model is much more improved as compared to time series models
+
+## Non-Linear Models
+
+#### Fit Neural Network
+
+
+```{r neural-network, warning=FALSE, message=FALSE, results='hide'}
+nnetGrid <- expand.grid(size = c(1:10),
+                        decay = c(0, 0.01, 0.1))
+nnetModel <- train(
+  trips~ .,
+  data = train,
+  method = "nnet",
+  tuneGrid = nnetGrid,
+  trControl = ctrl,
+  #preProcess = c("BoxCox", "center", "scale", "pca"),
+  maxit = 500
+)
+
+#plot(nnetModel)
+#varImp(nnetModel)
+
+nnetPred <- predict(nnetModel, newdata = testX)
+df.pred = data.frame(pred = nnetPred, Date = test$DATE)
+df.pred = df.pred %>% group_by(Date) %>%summarise(pred = sum(pred))
+
+calcRMSE('Neural Net', df.pred$pred, test.ts, 'Nonlinear Model') 
+```
+
+
+#### Fit MARS: Multivariate Adaptive Regression Splines
+
+
+```{r warning=FALSE, message=FALSE, results='hide'}
+library(earth)
+marsGrid <- expand.grid(.degree = 1:2, .nprune = 2:30)
+marsModel <- train(
+  trips ~ .,
+  data = train,
+  method = "earth",
+  tuneGrid = marsGrid,
+  trControl = ctrl
+)
+
+marsPred <- predict(marsModel, newdata = testX)
+df.pred = data.frame(pred = marsPred, Date = test$DATE)
+names(df.pred) = c('pred', 'Date')
+df.pred = df.pred %>% group_by(Date) %>%summarise(pred = sum(pred))
+
+calcRMSE('MARS', df.pred$pred, test.ts, 'Nonlinear Model') 
+```
+
+#### Fit SVM: Support Vector Machines
+
+#### svmRadial
+```{r SVMRadial, warning=FALSE, message=FALSE}
+svmModel <- train(
+  trips ~ .,
+  data = train,
+  method = "svmRadial",
+  preProc = c("center", "scale"),
+  #tuneLength = 14,
+  trControl = ctrl
+)
+svmPred <- predict(svmModel, newdata = testX)
+df.pred = data.frame(pred = svmPred, Date = test$DATE)
+names(df.pred) = c('pred', 'Date')
+df.pred = df.pred %>% group_by(Date) %>%summarise(pred = sum(pred))
+
+calcRMSE('SVM_Radial', df.pred$pred, test.ts, 'Nonlinear Model') 
+```
+
+
+#### svmPoly
+
+```{r SVMPoly, warning=FALSE, message=FALSE}
+svmModel2 <- train(
+  trips ~ .,
+  data = train,
+  method = "svmPoly",
+  preProc = c("center", "scale"),
+  #tuneLength = 14,
+  trControl = ctrl
+)
+svmPred2 <- predict(svmModel2, newdata = testX)
+df.pred = data.frame(pred = svmPred2, Date = test$DATE)
+names(df.pred) = c('pred', 'Date')
+df.pred = df.pred %>% group_by(Date) %>%summarise(pred = sum(pred))
+
+calcRMSE('SVM_Poly', df.pred$pred, test.ts, 'Nonlinear Model') 
+
+```
+
+#### svmLinear
+```{r SVMLinear, warning=FALSE, message=FALSE}
+svmModel3 <- train(
+  trips~ .,
+  data =train,
+  method = "svmLinear",
+  preProc = c("center", "scale"),
+  tuneGrid = data.frame(.C = c(.25, .5, 1)),
+  trControl = ctrl
+)
+
+svmPred3 <- predict(svmModel3, newdata = testX)
+df.pred = data.frame(pred = svmPred3, Date = test$DATE)
+names(df.pred) = c('pred', 'Date')
+df.pred = df.pred %>% group_by(Date) %>%summarise(pred = sum(pred))
+
+calcRMSE('SVM_Linear', df.pred$pred, test.ts, 'Nonlinear Model') 
+```
+
+
+#### Fit KNN: K-Nearest Neighbors
+
+```{r warning=FALSE, message=FALSE}
+
+knnModel <- train(
+  trips ~ .,
+  data = train,
+  method = "knn",
+  preProcess = c("center", "scale"),
+  tuneGrid = data.frame(.k = 1:10),
+  trControl = ctrl
+)
+
+knnPred <- predict(knnModel, newdata = testX)
+df.pred = data.frame(pred = knnPred, Date = test$DATE)
+names(df.pred) = c('pred', 'Date')
+df.pred = df.pred %>% group_by(Date) %>%summarise(pred = sum(pred))
+
+calcRMSE('KNN', df.pred$pred, test.ts, 'Nonlinear Model') 
+
+```
+
+#### Nonlinear Model Performance
+
+```{r}
+knitr::kable(df.perf %>% filter(ModelType == 'Nonlinear Model') %>% arrange (RMSE))
+```
+
+#### We can see that MARS model provides the best performance amongst non linear models
+
+#### Analyze residuals
+
+```{r}
+checkresiduals(marsModel)
+```
+
+#### Residuals from MARS model looks much better than timeseries/linear models. Residuals appeared to be normally distributed and ACF plot shows little correlation amongst residuals which is not very significant.
+
+#### Plot Forecast with MARS model
+```{r}
+df.pred = data.frame(pred = marsPred, Date = test$DATE)
+names(df.pred) = c('pred', 'Date')
+df.pred = df.pred %>% group_by(Date) %>%summarise(pred = sum(pred))
+autoplot(train.ts) +
+  autolayer(test.ts, series = 'Test Data') +
+  autolayer(ts(df.pred$pred, start = c(2019,1), end = c(2019,365), frequency = 365), series = 'Forecast') +
+  ggtitle("Forecast - Citibike ridership") +
+  ylab("Ride Count")
+```
+#### Forecast with MARS model is much more improved as compared to time series models/ linear models
+
+## Tree based ensemble models
+
+#### Fit Random Forest
+
+
+```{r random-forest, warning=FALSE, message=FALSE}
+library(randomForest)
+rf_model <- randomForest(trips ~ ., data = train, ntree = 300)
+rf_predicted <- predict(rf_model, testX)
+df.pred = data.frame(pred = rf_predicted, Date = test$DATE)
+names(df.pred) = c('pred', 'Date')
+df.pred = df.pred %>% group_by(Date) %>%summarise(pred = sum(pred))
+
+calcRMSE('Random Forest', df.pred$pred, test.ts, 'Treebased models') 
+
+```
+
+### Variable Importance - Random Forest
+```{r random-forest-variable-importance, warning=FALSE, message=FALSE}
+library(vip)
+rfImp1 <- rf_model$importance 
+vip(rf_model, color = 'red', fill='green') + 
+  ggtitle('Random Forest Var Imp')
+```
+
+### Boosted Trees
+```{r boosted-trees, warning=FALSE, message=FALSE}
+gbmGrid = expand.grid(interaction.depth = seq(1,5, by=2), n.trees = seq(100, 1000, by = 100), shrinkage = 0.1, n.minobsinnode = 5)
+gbm_model <- train(trips ~ ., data = train, tuneGrid = gbmGrid, verbose = FALSE, method = 'gbm' )
+gbm_predicted <- predict(gbm_model, testX)
+df.pred = data.frame(pred = gbm_predicted, Date = test$DATE)
+names(df.pred) = c('pred', 'Date')
+df.pred = df.pred %>% group_by(Date) %>%summarise(pred = sum(pred))
+
+calcRMSE('Boosted Trees', df.pred$pred, test.ts, "Treebased models") 
+```
+
+#### Treebased Model Performance
+
+```{r}
+knitr::kable(df.perf %>% filter(ModelType == 'Treebased models') %>% arrange (RMSE))
+```
+
+#### We can see that Boosted Trees model provides the best performance amongst Tree based models
+
+#### Analyze residuals
+
+```{r}
+checkresiduals(gbm_model)
+```
+
+#### Residuals from Boosted trees models looks most appropriate. Residuals are normally distributed. ACF plots doesn't show any correlation
+
+#### Plot Forecast with Boosted trees model
+```{r}
+df.pred = data.frame(pred = gbm_predicted, Date = test$DATE)
+names(df.pred) = c('pred', 'Date')
+df.pred = df.pred %>% group_by(Date) %>%summarise(pred = sum(pred))
+autoplot(train.ts) +
+  autolayer(test.ts, series = 'Test Data') +
+  autolayer(ts(df.pred$pred, start = c(2019,1), end = c(2019,365), frequency = 365), series = 'Forecast') +
+  ggtitle("Forecast - Citibike ridership") +
+  ylab("Ride Count")
+```
+
+#### Forecast with boosted trees model is much more improved as compared to time series models/ linear models/ non linear models
+
+
+## Model Performance
+
+#### Let's analyze overall model performance
+
+```{r model-perf-overall, warning=FALSE, message=FALSE}
+knitr::kable(df.perf %>% arrange (RMSE))
+```
+
+#### We can see the MARS model gives best performance amongst all the models
+
+#### Analyze MARS model feature importance
+
+### Variable Importance - MARS
+
+```{r Boosted-Trees-variable-importance, warning=FALSE, message=FALSE}
+library(vip)
+rfImp1 <- marsModel$importance 
+vip(marsModel, color = 'red', fill='green') + 
+  ggtitle('MARS Variable Importance')
+```
+
+
+# 8. Try Model Ensembles
+
+#### Let's combine top three models and evaluate performace
+
+```{r}
+final.pred = (gbm_predicted + marsPred + svmPred2)/3
+
+df.pred = data.frame(pred = final.pred, Date = test$DATE)
+names(df.pred) = c('pred', 'Date')
+df.pred = df.pred %>% group_by(Date) %>%summarise(pred = sum(pred))
+
+calcRMSE('Ensemble (gbm, mars, svm_poly)', df.pred$pred, test.ts, "Top Ensemble Models") 
+
+```
+
+#### Overall model perfomance with ensemble
+
+
+```{r model-perf-ensemble, warning=FALSE, message=FALSE}
+knitr::kable(df.perf %>% arrange (RMSE))
+```
+
+#### The best performance can be obtained by making an ensemble of top three models
+
+* Boosted Trees
+* MARS
+* SVM Poly
+
+#### Plot forecast with Ensemble models
+
+```{r}
+df.pred = data.frame(pred = final.pred, Date = test$DATE)
+names(df.pred) = c('pred', 'Date')
+df.pred = df.pred %>% group_by(Date) %>%summarise(pred = sum(pred))
+autoplot(train.ts) +
+  autolayer(test.ts, series = 'Test Data') +
+  autolayer(ts(df.pred$pred, start = c(2019,1), end = c(2019,365), frequency = 365), series = 'Forecast') +
+  ggtitle("Ensemble model Forecast - Citibike ridership") +
+  ylab("Ride Count")
+```
+
+#### Forecast with Ensemble models looks much better than any other individual models
+
+# 4. Conclusion
+
+The Citybike ridership analysis determined in this paper have many implications. Analysis reveals interesting scientific facts which are statestically significant. Citibike ridership data shows a strong annual sesonality and increasing trend. Ridership count increases in summer and decreases in winter. Increasing trend in the ridership count from 2013 to 2019 shows increasing popularity of Citybike ridership service over the period of time. It is established that most the Citibike riders are young in their 30s and 40s. Citibike customers prefers to use ride share service for making shot distance trips < 2 KM. It is established with statestical significance that weather has a significant impact on Citibike ridfership pattern. Good weather has positive corrleation with Citibike ridership count. 
+
+For predicting future Citibike ridership count, statestical timeseries models alone are not sufficient. Based on RMSE and residual analysis, statestical timeseries models alone doesn't do a better job of forecasting Citibike rideshare count. This is due to the fact that statestical timeseries models doesn't leverage the rich feature set available for model optimization e.g. weather data. Based on RMSE Linear models do better job of forecasting Citibike ridership count than timeseries models. This is due to the fact that Linear models are multivariate and leverage rich input features for model optimization.
+
+Nonlinear models further improves the RMSE and outerforms Linear models. The fact that Nonlinear models are better suited for CitiBike ridership dataset suggests that there exists a non linear relatioship between input features and predictor variables
+
+The best model performance is derived from tree based models. Boosted tree model outperforms all other models and provides best performance in terms of RMSE. Residual analysis of boosted tree models looks more appropriate where residuals are perfectly normally distributed and ACF plot shows no correlation between residuals. The variable importance of Boosted trees models revals important infomration about what factors significantly imact the Citibike ridership pattern. From the Boosted Trees model variable importance plot we can conclude that following factors are statestically significant in infuencing Citibike ridership pattern
+
+* Distance between station
+* Gender
+* User Type (customers/ Subscribers)
+* Trip Duration
+* Day of week
+* Avg age of users
+* Temperature
+* Wind Speed
+
+Above factors are key input for Citibike system operator for planning increase in the number of bicycles availability and expansion of the geographic footprint of docking stations. 
+
+It is imperative that for a complex business operation like Citibike which involves many factors (Internal and External) one model alone won't be sufficient for ridership forecasting. When we tried Ensemble of top three models (Boosted Trees, MARS and SVM Poly) we got the best performace in terms of RMSE (7 % RMSE improvement). We can conclude that the best modelling strategy for predicting future ridership pattern for Citibike ridershare service is to use model ensembles. Winning model enselbles established in this paper will enable Citibike system operator to make informed business expansion plans resulting into increased ROI and long-term business profitability and viability of Citibike operations
